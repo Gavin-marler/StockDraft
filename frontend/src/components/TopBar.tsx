@@ -3,6 +3,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useLeagues } from "../hooks/useLeagues";
 import { useLeagueContext } from "../hooks/useLeagueContext";
+import SignInModal from "./SignInModal";
 
 export default function TopBar() {
   const { user, signOut } = useAuth();
@@ -12,6 +13,7 @@ export default function TopBar() {
   const ctx = useLeagueContext(leagueId);
   const leagues = useLeagues();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [signInOpen, setSignInOpen] = useState(false);
 
   function isActive(path: string) {
     return location.pathname === path;
@@ -100,10 +102,13 @@ export default function TopBar() {
               <button className="btn-ghost text-xs" onClick={() => signOut()}>Sign out</button>
             </div>
           ) : (
-            <span className="text-gray-500 text-xs">Not signed in</span>
+            <button className="btn-primary text-xs" onClick={() => setSignInOpen(true)}>
+              Sign in
+            </button>
           )}
         </nav>
       </div>
+      {signInOpen && <SignInModal onClose={() => setSignInOpen(false)} />}
     </header>
   );
 }
