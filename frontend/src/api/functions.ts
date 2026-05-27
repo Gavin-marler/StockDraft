@@ -33,6 +33,7 @@ export const fn = {
     stocks_per_player: number;
     max_players: number;
     start_date: string;
+    admin_name?: string;
   }) => call<{ league_id: string; invite_token: string }>("create-league", b),
 
   joinLeague: (b: { invite_token: string; name: string }) =>

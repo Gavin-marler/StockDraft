@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { fn } from "../api/functions";
 import SignInGate from "../components/SignInGate";
+import { useAuth } from "../hooks/useAuth";
 
 export default function Create() {
   return (
     <SignInGate
       title="Sign in to create a league"
-      hint="You'll be the admin. We'll send a magic link to your email."
+      hint="You'll be the admin and also a player in the league."
     >
       <CreateForm />
     </SignInGate>
@@ -14,7 +15,10 @@ export default function Create() {
 }
 
 function CreateForm() {
+  const { user } = useAuth();
+  const defaultDisplay = user?.email?.split("@")[0] || "";
   const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState(defaultDisplay);
   const [budget, setBudget] = useState(500);
   const [stocksPerPlayer, setStocksPerPlayer] = useState(5);
   const [maxPlayers, setMaxPlayers] = useState(6);
@@ -27,10 +31,12 @@ function CreateForm() {
     e.preventDefault();
     setErr(null);
     if (!name.trim()) return setErr("League name is required.");
+    if (!displayName.trim()) return setErr("Your display name is required.");
     setLoading(true);
     try {
       const r = await fn.createLeague({
         name: name.trim(),
+        admin_name: displayName.trim(),
         budget,
         stocks_per_player: stocksPerPlayer,
         max_players: maxPlayers,
@@ -51,6 +57,10 @@ function CreateForm() {
     return (
       <div className="max-w-xl mx-auto py-12 px-6 space-y-6">
         <h1 className="text-3xl font-bold">League created!</h1>
+        <p className="text-sm text-gray-400">
+          You're already in as <span className="text-white">{displayName.trim()}</span> — share the
+          invite link below to get the rest of your league signed up.
+        </p>
         <div className="card space-y-4">
           <div>
             <div className="label">Invite link (share with players)</div>
@@ -65,12 +75,9 @@ function CreateForm() {
             <CopyField value={leaderboardUrl} />
           </div>
         </div>
-        <a href={inviteUrl} className="btn-primary block text-center">
-          Join your own league as a player →
+        <a href={adminUrl} className="btn-primary block text-center">
+          Open admin dashboard →
         </a>
-        <p className="text-xs text-gray-500 text-center">
-          As admin you can also join as a player — your name will appear on the leaderboard.
-        </p>
       </div>
     );
   }
@@ -82,6 +89,17 @@ function CreateForm() {
         <div>
           <label htmlFor="f-name" className="label">League name</label>
           <input id="f-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <label htmlFor="f-display" className="label">Your display name</label>
+          <input
+            id="f-display"
+            className="input"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="How other players will see you"
+          />
+          <p className="text-xs text-gray-500 mt-1">You'll be automatically added as a player.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
