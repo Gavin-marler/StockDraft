@@ -9,3 +9,5 @@ supabase/.branches
 supabase/.temp
 .vercel
 .secrets.local
+frontend/test-results
+frontend/playwright-report
