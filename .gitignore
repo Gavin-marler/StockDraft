@@ -11,3 +11,5 @@ supabase/.temp
 .secrets.local
 frontend/test-results
 frontend/playwright-report
+.claude
+frontend/tsconfig*.tsbuildinfo
