@@ -14,6 +14,7 @@ type DraftState = {
   status: "waiting" | "picking" | "complete";
 };
 type League = { id: string; name: string; stocks_per_player: number; budget: number };
+type Quote = { price: number; change_pct: number };
 
 export default function Draft() {
   const [params] = useSearchParams();
@@ -26,8 +27,11 @@ export default function Draft() {
   const [now, setNow] = useState(Date.now());
   const [pin, setPin] = useState("");
   const [search, setSearch] = useState("");
-  const [lookup, setLookup] = useState<{ ticker: string; price: number } | null>(null);
-  const [lookupErr, setLookupErr] = useState<string | null>(null);
+  const [prices, setPrices] = useState<Record<string, Quote>>({});
+  const [pricesLoading, setPricesLoading] = useState(false);
+  const [customQuote, setCustomQuote] = useState<Quote | null>(null);
+  const [customLoading, setCustomLoading] = useState(false);
+  const [customErr, setCustomErr] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{ ticker: string; price: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -86,6 +90,26 @@ export default function Draft() {
     };
   }, [leagueId]);
 
+  // Pre-load prices for the top 50 (cached server-side, so this is cheap).
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPrices() {
+      setPricesLoading(true);
+      try {
+        const r = await fn.fetchTickerPrices(sp500.map((s) => s.ticker), false);
+        if (!cancelled) setPrices(r.prices);
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        if (!cancelled) setPricesLoading(false);
+      }
+    }
+    loadPrices();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const remainingMs = ds?.pick_deadline ? new Date(ds.pick_deadline).getTime() - now : 0;
   const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
 
@@ -105,41 +129,47 @@ export default function Draft() {
 
   const isMyTurn = ds?.status === "picking" && ds?.current_player_id === me?.id;
 
-  async function doLookup() {
-    setLookupErr(null);
-    setLookup(null);
-    const t = search.trim().toUpperCase();
-    if (!t) return;
-    if (draftedTickers.has(t)) {
-      setLookupErr(`${t} already drafted`);
-      return;
-    }
+  const filtered = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    if (!q) return sp500;
+    return sp500.filter(
+      (s) => s.ticker.includes(q) || s.name.toUpperCase().includes(q) || s.sector.toUpperCase().includes(q),
+    );
+  }, [search]);
+
+  const exactCustomMatch = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    if (!q || !/^[A-Z.\-]{1,8}$/.test(q)) return null;
+    if (sp500.some((s) => s.ticker === q)) return null;
+    return q;
+  }, [search]);
+
+  async function lookupCustom(ticker: string) {
+    setCustomLoading(true);
+    setCustomErr(null);
+    setCustomQuote(null);
     try {
-      const r = await fn.fetchPrices({ league_id: leagueId, refresh: true });
-      // fallback: try lookupTicker which forwards raw tickers
-      const r2: any = await fn.lookupTicker({ ticker: t });
-      if (r2?.prices && r2.prices[t]) {
-        setLookup({ ticker: t, price: r2.prices[t].price });
-      } else if (r.prices[t]) {
-        setLookup({ ticker: t, price: r.prices[t].price });
+      const r = await fn.lookupTicker(ticker);
+      if (r.prices[ticker]) {
+        setCustomQuote(r.prices[ticker]);
+        setPrices((p) => ({ ...p, [ticker]: r.prices[ticker] }));
       } else {
-        setLookupErr(`No price found for ${t}`);
+        setCustomErr(`No price found for ${ticker}`);
       }
     } catch (e: any) {
-      setLookupErr(e.message);
+      setCustomErr(e.message);
+    } finally {
+      setCustomLoading(false);
     }
   }
 
-  async function pickPopular(ticker: string) {
-    if (draftedTickers.has(ticker)) return;
-    try {
-      const r: any = await fn.lookupTicker({ ticker });
-      const px = r?.prices?.[ticker]?.price;
-      if (!px) return setErr(`No price for ${ticker}`);
-      setConfirming({ ticker, price: px });
-    } catch (e: any) {
-      setErr(e.message);
+  function requestDraft(ticker: string, price: number) {
+    if (!pin) {
+      setErr("Enter your PIN above first.");
+      return;
     }
+    setErr(null);
+    setConfirming({ ticker, price });
   }
 
   async function confirmPick() {
@@ -149,8 +179,8 @@ export default function Draft() {
     try {
       await fn.makePick({ player_id: me.id, pin, ticker: confirming.ticker });
       setConfirming(null);
-      setLookup(null);
       setSearch("");
+      setCustomQuote(null);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -174,7 +204,7 @@ export default function Draft() {
   const order = snakeOrder(players, league.stocks_per_player);
 
   return (
-    <div className="max-w-6xl mx-auto py-6 px-6 space-y-6">
+    <div className="max-w-7xl mx-auto py-6 px-6 space-y-6">
       <div className="flex items-baseline justify-between">
         <div>
           <h1 className="text-3xl font-bold">{league.name} — Draft</h1>
@@ -186,7 +216,10 @@ export default function Draft() {
       <div className="card flex items-center justify-between">
         <div>
           <div className="text-sm text-gray-400">On the clock</div>
-          <div className="text-2xl font-bold">{currentPlayer?.name || "?"}</div>
+          <div className="text-2xl font-bold">
+            {currentPlayer?.name || "?"}
+            {isMyTurn && <span className="ml-2 text-accent text-sm">(your pick)</span>}
+          </div>
         </div>
         <div className={`text-5xl font-mono ${remainingSec <= 10 ? "text-loss" : "text-accent"}`}>
           {remainingSec}s
@@ -195,66 +228,155 @@ export default function Draft() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
-          {isMyTurn ? (
-            <div className="card space-y-4">
-              <h2 className="font-semibold">Your pick</h2>
+          <div className="card space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-end gap-3 sm:justify-between">
               <div>
-                <label className="label">Your PIN</label>
-                <input
-                  inputMode="numeric"
-                  maxLength={4}
-                  className="input tracking-widest text-center text-xl w-32"
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-                />
+                <h2 className="font-semibold">Available stocks</h2>
+                <p className="text-xs text-gray-500">
+                  {isMyTurn
+                    ? "Enter your PIN, then click Draft on any row."
+                    : `Waiting for ${currentPlayer?.name} to pick…`}
+                </p>
               </div>
-              <div>
-                <label className="label">Search ticker</label>
-                <div className="flex gap-2">
+              <div className="flex gap-3 items-end">
+                <div>
+                  <label htmlFor="d-pin" className="label">Your PIN</label>
                   <input
-                    className="input"
-                    placeholder="e.g. AAPL"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value.toUpperCase())}
-                    onKeyDown={(e) => e.key === "Enter" && doLookup()}
+                    id="d-pin"
+                    inputMode="numeric"
+                    maxLength={4}
+                    className="input tracking-widest text-center text-lg w-28"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                    placeholder="••••"
                   />
-                  <button className="btn-ghost" type="button" onClick={doLookup}>Lookup</button>
                 </div>
-                {lookupErr && <div className="text-loss text-sm mt-2">{lookupErr}</div>}
-                {lookup && (
-                  <div className="mt-3 flex items-center justify-between">
-                    <span><span className="font-mono">{lookup.ticker}</span> @ ${lookup.price.toFixed(2)}</span>
-                    <button className="btn-primary text-sm" onClick={() => setConfirming(lookup)}>Draft</button>
-                  </div>
-                )}
-              </div>
-              <div>
-                <div className="label">Popular tickers</div>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                  {sp500.map((s) => (
-                    <button
-                      key={s.ticker}
-                      disabled={draftedTickers.has(s.ticker)}
-                      onClick={() => pickPopular(s.ticker)}
-                      className={`text-xs rounded border px-2 py-2 font-mono ${
-                        draftedTickers.has(s.ticker)
-                          ? "border-gray-800 text-gray-600 line-through cursor-not-allowed"
-                          : "border-gray-700 hover:border-accent"
-                      }`}
-                      title={s.name}
-                    >
-                      {s.ticker}
-                    </button>
-                  ))}
+                <div className="flex-1 min-w-[12rem]">
+                  <label htmlFor="d-search" className="label">Search ticker, name, or sector</label>
+                  <input
+                    id="d-search"
+                    className="input"
+                    placeholder="e.g. NVDA, healthcare, ROKU"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
                 </div>
               </div>
-              {err && <div className="text-loss text-sm">{err}</div>}
             </div>
-          ) : (
-            <div className="card text-gray-400 text-sm">
-              Waiting for {currentPlayer?.name} to pick…
+
+            {err && <div className="text-loss text-sm">{err}</div>}
+
+            <div className="overflow-x-auto rounded-lg border border-gray-800">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-gray-500 bg-black/30">
+                  <tr>
+                    <th className="text-left px-3 py-2">Ticker</th>
+                    <th className="text-left px-3 py-2">Company</th>
+                    <th className="text-left px-3 py-2 hidden sm:table-cell">Sector</th>
+                    <th className="text-right px-3 py-2">Price</th>
+                    <th className="text-right px-3 py-2">Day %</th>
+                    <th className="px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((s) => {
+                    const q = prices[s.ticker];
+                    const taken = draftedTickers.has(s.ticker);
+                    return (
+                      <tr
+                        key={s.ticker}
+                        className={`border-t border-gray-800 ${taken ? "opacity-40" : "hover:bg-black/30"}`}
+                      >
+                        <td className="px-3 py-2 font-mono font-semibold">{s.ticker}</td>
+                        <td className="px-3 py-2">{s.name}</td>
+                        <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">{s.sector}</td>
+                        <td className="px-3 py-2 text-right font-mono">
+                          {q ? `$${q.price.toFixed(2)}` : pricesLoading ? "…" : "—"}
+                        </td>
+                        <td
+                          className={`px-3 py-2 text-right font-mono ${
+                            q?.change_pct == null
+                              ? "text-gray-500"
+                              : q.change_pct >= 0
+                              ? "text-accent"
+                              : "text-loss"
+                          }`}
+                        >
+                          {q ? `${q.change_pct >= 0 ? "+" : ""}${q.change_pct.toFixed(2)}%` : ""}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {taken ? (
+                            <span className="text-xs text-gray-500">Drafted</span>
+                          ) : (
+                            <button
+                              className="btn-primary text-xs px-3 py-1"
+                              disabled={!isMyTurn || !q}
+                              onClick={() => q && requestDraft(s.ticker, q.price)}
+                            >
+                              Draft
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filtered.length === 0 && !exactCustomMatch && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-gray-500">
+                        No matches in the top 50.
+                      </td>
+                    </tr>
+                  )}
+                  {exactCustomMatch && (
+                    <tr className="border-t border-gray-800 bg-emerald-950/20">
+                      <td className="px-3 py-2 font-mono font-semibold">{exactCustomMatch}</td>
+                      <td className="px-3 py-2 text-gray-400 italic" colSpan={2}>
+                        Outside top 50 — look up live price
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono">
+                        {customQuote ? `$${customQuote.price.toFixed(2)}` : "—"}
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right font-mono ${
+                          customQuote
+                            ? customQuote.change_pct >= 0
+                              ? "text-accent"
+                              : "text-loss"
+                            : "text-gray-500"
+                        }`}
+                      >
+                        {customQuote
+                          ? `${customQuote.change_pct >= 0 ? "+" : ""}${customQuote.change_pct.toFixed(2)}%`
+                          : ""}
+                      </td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        {draftedTickers.has(exactCustomMatch) ? (
+                          <span className="text-xs text-gray-500">Drafted</span>
+                        ) : customQuote ? (
+                          <button
+                            className="btn-primary text-xs px-3 py-1"
+                            disabled={!isMyTurn}
+                            onClick={() => requestDraft(exactCustomMatch, customQuote.price)}
+                          >
+                            Draft
+                          </button>
+                        ) : (
+                          <button
+                            className="btn-ghost text-xs px-3 py-1"
+                            disabled={customLoading}
+                            onClick={() => lookupCustom(exactCustomMatch)}
+                          >
+                            {customLoading ? "Looking up…" : "Look up"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-          )}
+            {customErr && <div className="text-loss text-sm">{customErr}</div>}
+          </div>
 
           <div className="card">
             <h2 className="font-semibold mb-3">Draft board</h2>
@@ -277,14 +399,13 @@ export default function Draft() {
         <Modal onClose={() => setConfirming(null)}>
           <h3 className="text-xl font-bold mb-3">Confirm pick</h3>
           <p className="text-gray-300 mb-4">
-            Draft <span className="font-mono">{confirming.ticker}</span> at $
+            Draft <span className="font-mono font-bold">{confirming.ticker}</span> at $
             {confirming.price.toFixed(2)}?
           </p>
-          {!pin && <div className="text-loss text-sm mb-2">Enter your PIN above first.</div>}
           {err && <div className="text-loss text-sm mb-2">{err}</div>}
           <div className="flex justify-end gap-2">
             <button className="btn-ghost" onClick={() => setConfirming(null)}>Cancel</button>
-            <button className="btn-primary" disabled={submitting || !pin} onClick={confirmPick}>
+            <button className="btn-primary" disabled={submitting} onClick={confirmPick}>
               {submitting ? "Drafting…" : "Confirm"}
             </button>
           </div>
@@ -304,7 +425,6 @@ function snakeOrder(players: Player[], rounds: number): { round: number; playerI
 }
 
 function DraftBoard({
-  order,
   players,
   holdings,
   stocksPerPlayer,
@@ -340,7 +460,7 @@ function DraftBoard({
               <td className="py-2 font-medium">{p.name}</td>
               {grid[p.id].map((h, i) => (
                 <td key={i} className="py-2 font-mono">
-                  {h?.ticker ? h.ticker : h?.is_cash ? "$$$" : "—"}
+                  {h?.ticker ? h.ticker : "—"}
                 </td>
               ))}
             </tr>

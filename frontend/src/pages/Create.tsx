@@ -73,13 +73,14 @@ export default function Create() {
       <h1 className="text-3xl font-bold mb-6">Create a league</h1>
       <form onSubmit={submit} className="card space-y-4">
         <div>
-          <label className="label">League name</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          <label htmlFor="f-name" className="label">League name</label>
+          <input id="f-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label">Budget per player ($)</label>
+            <label htmlFor="f-budget" className="label">Budget per player ($)</label>
             <input
+              id="f-budget"
               type="number"
               min={50}
               className="input"
@@ -88,8 +89,9 @@ export default function Create() {
             />
           </div>
           <div>
-            <label className="label">Stocks per player</label>
+            <label htmlFor="f-stocks" className="label">Stocks per player</label>
             <input
+              id="f-stocks"
               type="number"
               min={1}
               max={10}
@@ -101,8 +103,9 @@ export default function Create() {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label">Max players (2-8)</label>
+            <label htmlFor="f-max" className="label">Max players (2-8)</label>
             <input
+              id="f-max"
               type="number"
               min={2}
               max={8}
@@ -112,8 +115,9 @@ export default function Create() {
             />
           </div>
           <div>
-            <label className="label">Start date</label>
+            <label htmlFor="f-start" className="label">Start date</label>
             <input
+              id="f-start"
               type="date"
               className="input"
               value={startDate}
@@ -122,8 +126,9 @@ export default function Create() {
           </div>
         </div>
         <div>
-          <label className="label">Admin password</label>
+          <label htmlFor="f-pw" className="label">Admin password</label>
           <input
+            id="f-pw"
             type="password"
             className="input"
             value={password}
@@ -131,8 +136,9 @@ export default function Create() {
           />
         </div>
         <div>
-          <label className="label">Confirm admin password</label>
+          <label htmlFor="f-pwc" className="label">Confirm admin password</label>
           <input
+            id="f-pwc"
             type="password"
             className="input"
             value={confirm}

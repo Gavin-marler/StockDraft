@@ -77,8 +77,9 @@ export default function Admin() {
         <h1 className="text-3xl font-bold mb-6">Admin login</h1>
         <form onSubmit={login} className="card space-y-4">
           <div>
-            <label className="label">Admin password</label>
+            <label htmlFor="a-pw" className="label">Admin password</label>
             <input
+              id="a-pw"
               type="password"
               className="input"
               value={pw}

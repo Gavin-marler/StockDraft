@@ -79,9 +79,15 @@ export const fn = {
   deleteLeague: (b: { league_id: string }, token: string) =>
     call<{ ok: true }>("delete-league", b, { "x-admin-token": token }),
 
-  lookupTicker: (b: { ticker: string }) =>
-    call<{ ticker: string; price: number; change_pct: number } | { error: string }>(
+  lookupTicker: (ticker: string) =>
+    call<{ prices: Record<string, { price: number; change_pct: number }>; last_updated: string }>(
       "fetch-prices",
-      { tickers: [b.ticker], refresh: true, raw: true }
+      { tickers: [ticker.toUpperCase()], refresh: true }
+    ),
+
+  fetchTickerPrices: (tickers: string[], refresh = false) =>
+    call<{ prices: Record<string, { price: number; change_pct: number }>; last_updated: string }>(
+      "fetch-prices",
+      { tickers, refresh }
     ),
 };

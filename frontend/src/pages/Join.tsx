@@ -52,12 +52,13 @@ export default function Join() {
       <h1 className="text-3xl font-bold mb-6">Join StockDraft</h1>
       <form onSubmit={submit} className="card space-y-4">
         <div>
-          <label className="label">Your name</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          <label htmlFor="j-name" className="label">Your name</label>
+          <input id="j-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <label className="label">4-digit PIN</label>
+          <label htmlFor="j-pin" className="label">4-digit PIN</label>
           <input
+            id="j-pin"
             inputMode="numeric"
             maxLength={4}
             className="input tracking-widest text-center text-xl"
@@ -66,8 +67,9 @@ export default function Join() {
           />
         </div>
         <div>
-          <label className="label">Confirm PIN</label>
+          <label htmlFor="j-pin2" className="label">Confirm PIN</label>
           <input
+            id="j-pin2"
             inputMode="numeric"
             maxLength={4}
             className="input tracking-widest text-center text-xl"
