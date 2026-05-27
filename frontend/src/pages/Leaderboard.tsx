@@ -3,8 +3,9 @@ import { supabase } from "../api/supabaseClient";
 import { fn } from "../api/functions";
 import ConfettiBurst from "../components/ConfettiBurst";
 import TradeModal from "../components/TradeModal";
+import { useAuth } from "../hooks/useAuth";
 
-type Player = { id: string; name: string; last_trade_month: string | null };
+type Player = { id: string; name: string; last_trade_month: string | null; auth_user_id: string };
 type Holding = {
   id: string;
   player_id: string;
@@ -30,6 +31,7 @@ type League = {
 };
 
 export default function Leaderboard({ leagueId }: { leagueId: string }) {
+  const { user } = useAuth();
   const [league, setLeague] = useState<League | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [holdings, setHoldings] = useState<Holding[]>([]);
@@ -43,7 +45,7 @@ export default function Leaderboard({ leagueId }: { leagueId: string }) {
       supabase.from("leagues").select("*").eq("id", leagueId).single(),
       supabase
         .from("players")
-        .select("id, name, last_trade_month")
+        .select("id, name, last_trade_month, auth_user_id")
         .eq("league_id", leagueId)
         .eq("status", "approved"),
       supabase
@@ -190,12 +192,14 @@ export default function Leaderboard({ leagueId }: { leagueId: string }) {
                     </td>
                     {league.status === "active" && (
                       <td className="text-right">
-                        <button
-                          className="btn-ghost text-xs"
-                          onClick={() => setTradeFor(r.player)}
-                        >
-                          Trade
-                        </button>
+                        {r.player.auth_user_id === user?.id ? (
+                          <button
+                            className="btn-ghost text-xs"
+                            onClick={() => setTradeFor(r.player)}
+                          >
+                            Trade
+                          </button>
+                        ) : null}
                       </td>
                     )}
                   </tr>
@@ -227,7 +231,6 @@ export default function Leaderboard({ leagueId }: { leagueId: string }) {
       {tradeFor && (
         <TradeModal
           player={tradeFor}
-          leagueId={leagueId}
           holdings={holdings.filter((h) => h.player_id === tradeFor.id)}
           heldTickers={new Set(holdings.filter((h) => h.ticker).map((h) => h.ticker!))}
           prices={prices}

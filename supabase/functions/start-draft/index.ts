@@ -1,6 +1,6 @@
 import { preflight, json, err } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/supabase.ts";
-import { requireAdminTokenForLeague } from "../_shared/auth.ts";
+import { requireLeagueAdmin } from "../_shared/auth.ts";
 import { loadApprovedPlayers, PICK_TIMER_SECONDS } from "../_shared/draft.ts";
 
 Deno.serve(async (req) => {
@@ -9,7 +9,7 @@ Deno.serve(async (req) => {
   try {
     const { league_id } = await req.json();
     if (!league_id) return err("league_id required");
-    await requireAdminTokenForLeague(req, league_id);
+    await requireLeagueAdmin(req, league_id);
     const sb = serviceClient();
 
     const { data: league } = await sb
@@ -23,7 +23,6 @@ Deno.serve(async (req) => {
     const players = await loadApprovedPlayers(league_id);
     if (players.length < 2) return err("Need at least 2 approved players");
 
-    // Rotate invite token to expire current links
     await sb
       .from("leagues")
       .update({ status: "drafting", invite_token: crypto.randomUUID() })
@@ -47,6 +46,6 @@ Deno.serve(async (req) => {
     });
     return json({ ok: true });
   } catch (e: any) {
-    return err(e?.message || "unknown", 500);
+    return err(e?.message || "unknown", 401);
   }
 });

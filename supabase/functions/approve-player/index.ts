@@ -1,6 +1,6 @@
 import { preflight, json, err } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/supabase.ts";
-import { requireAdminTokenForLeague } from "../_shared/auth.ts";
+import { requireLeagueAdmin } from "../_shared/auth.ts";
 
 Deno.serve(async (req) => {
   const p = preflight(req); if (p) return p;
@@ -8,6 +8,7 @@ Deno.serve(async (req) => {
   try {
     const { player_id, action, name } = await req.json();
     if (!player_id || !action) return err("player_id and action required");
+
     const sb = serviceClient();
     const { data: player } = await sb
       .from("players")
@@ -15,10 +16,9 @@ Deno.serve(async (req) => {
       .eq("id", player_id)
       .maybeSingle();
     if (!player) return err("Player not found", 404);
-    await requireAdminTokenForLeague(req, player.league_id);
+    await requireLeagueAdmin(req, player.league_id);
 
     if (action === "approve") {
-      // Check league not full
       const { count } = await sb
         .from("players")
         .select("id", { count: "exact", head: true })
@@ -49,6 +49,6 @@ Deno.serve(async (req) => {
     }
     return json({ ok: true });
   } catch (e: any) {
-    return err(e?.message || "unknown", 500);
+    return err(e?.message || "unknown", 401);
   }
 });

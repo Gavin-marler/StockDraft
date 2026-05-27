@@ -1,20 +1,42 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { fn } from "../api/functions";
+import SignInGate from "../components/SignInGate";
+import { useAuth } from "../hooks/useAuth";
 
 export default function Join() {
   const [params] = useSearchParams();
   const token = params.get("token") || "";
+  if (!token) return <Center>Missing invite token.</Center>;
+  return (
+    <SignInGate
+      title="Sign in to join this league"
+      hint="We'll send a magic link to your email. Your email becomes your identity in the league."
+    >
+      <JoinForm token={token} />
+    </SignInGate>
+  );
+}
+
+function JoinForm({ token }: { token: string }) {
+  const { user } = useAuth();
   const [name, setName] = useState("");
-  const [pin, setPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState<{ league_id: string; player_id: string } | null>(null);
-
-  if (!token) return <Center>Missing invite token.</Center>;
+  const [submitted, setSubmitted] = useState<{ league_id: string; status: string } | null>(null);
 
   if (submitted) {
+    if (submitted.status === "approved") {
+      return (
+        <div className="max-w-md mx-auto py-16 px-6 text-center space-y-4">
+          <div className="text-6xl">✓</div>
+          <h1 className="text-2xl font-bold">You're in!</h1>
+          <a href={`/?league=${submitted.league_id}`} className="btn-primary inline-block">
+            Go to leaderboard
+          </a>
+        </div>
+      );
+    }
     return (
       <div className="max-w-md mx-auto py-16 px-6 text-center space-y-4">
         <div className="text-6xl">⏳</div>
@@ -22,9 +44,9 @@ export default function Join() {
         <p className="text-gray-400">
           Your request to join was submitted. The league admin will approve you shortly.
         </p>
-        <p className="text-xs text-gray-500">
-          Bookmark this page — once approved you can access the draft and leaderboard.
-        </p>
+        <a href={`/?league=${submitted.league_id}`} className="text-sm text-gray-500 underline">
+          View the league leaderboard
+        </a>
       </div>
     );
   }
@@ -32,13 +54,10 @@ export default function Join() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    if (!/^\d{4}$/.test(pin)) return setErr("PIN must be exactly 4 digits.");
-    if (pin !== confirmPin) return setErr("PINs do not match.");
     if (!name.trim()) return setErr("Name is required.");
     setLoading(true);
     try {
-      const r = await fn.joinLeague({ invite_token: token, name: name.trim(), pin });
-      localStorage.setItem(`player:${r.league_id}`, JSON.stringify({ id: r.player_id, name: name.trim() }));
+      const r = await fn.joinLeague({ invite_token: token, name: name.trim() });
       setSubmitted(r);
     } catch (e: any) {
       setErr(e.message);
@@ -49,37 +68,23 @@ export default function Join() {
 
   return (
     <div className="max-w-md mx-auto py-12 px-6">
-      <h1 className="text-3xl font-bold mb-6">Join StockDraft</h1>
+      <h1 className="text-3xl font-bold mb-2">Join StockDraft</h1>
+      <p className="text-xs text-gray-500 mb-6">Signed in as {user?.email}</p>
       <form onSubmit={submit} className="card space-y-4">
         <div>
-          <label htmlFor="j-name" className="label">Your name</label>
-          <input id="j-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <label htmlFor="j-pin" className="label">4-digit PIN</label>
+          <label htmlFor="j-name" className="label">Display name</label>
           <input
-            id="j-pin"
-            inputMode="numeric"
-            maxLength={4}
-            className="input tracking-widest text-center text-xl"
-            value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-          />
-        </div>
-        <div>
-          <label htmlFor="j-pin2" className="label">Confirm PIN</label>
-          <input
-            id="j-pin2"
-            inputMode="numeric"
-            maxLength={4}
-            className="input tracking-widest text-center text-xl"
-            value={confirmPin}
-            onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+            id="j-name"
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="How should others see you?"
+            autoFocus
           />
         </div>
         {err && <div className="text-loss text-sm">{err}</div>}
         <button className="btn-primary w-full" disabled={loading}>
-          {loading ? "Joining…" : "Join league"}
+          {loading ? "Joining…" : "Request to join"}
         </button>
       </form>
     </div>

@@ -3,8 +3,10 @@ import { useSearchParams } from "react-router-dom";
 import { supabase } from "../api/supabaseClient";
 import { fn } from "../api/functions";
 import sp500 from "../data/sp500_top50.json";
+import SignInGate from "../components/SignInGate";
+import { useAuth } from "../hooks/useAuth";
 
-type Player = { id: string; name: string };
+type Player = { id: string; name: string; auth_user_id: string };
 type Holding = { id: string; player_id: string; ticker: string | null; buy_price: number };
 type DraftState = {
   id: string;
@@ -19,13 +21,22 @@ type Quote = { price: number; change_pct: number };
 export default function Draft() {
   const [params] = useSearchParams();
   const leagueId = params.get("league") || "";
+  if (!leagueId) return <Center>Missing league id.</Center>;
+  return (
+    <SignInGate title="Sign in to enter the draft room">
+      <DraftRoom leagueId={leagueId} />
+    </SignInGate>
+  );
+}
+
+function DraftRoom({ leagueId }: { leagueId: string }) {
+  const { user } = useAuth();
   const [league, setLeague] = useState<League | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [ds, setDs] = useState<DraftState | null>(null);
   const [activity, setActivity] = useState<{ id: string; description: string }[]>([]);
   const [now, setNow] = useState(Date.now());
-  const [pin, setPin] = useState("");
   const [search, setSearch] = useState("");
   const [prices, setPrices] = useState<Record<string, Quote>>({});
   const [pricesLoading, setPricesLoading] = useState(false);
@@ -37,21 +48,12 @@ export default function Draft() {
   const [submitting, setSubmitting] = useState(false);
   const autoFiredRef = useRef<string | null>(null);
 
-  const me = useMemo(() => {
-    try {
-      const raw = localStorage.getItem(`player:${leagueId}`);
-      return raw ? (JSON.parse(raw) as { id: string; name: string }) : null;
-    } catch {
-      return null;
-    }
-  }, [leagueId]);
-
   async function loadAll() {
     const [{ data: l }, { data: ps }, { data: hs }, { data: state }, { data: act }] = await Promise.all([
       supabase.from("leagues").select("id, name, stocks_per_player, budget").eq("id", leagueId).single(),
       supabase
         .from("players")
-        .select("id, name")
+        .select("id, name, auth_user_id")
         .eq("league_id", leagueId)
         .eq("status", "approved")
         .order("created_at", { ascending: true }),
@@ -90,7 +92,6 @@ export default function Draft() {
     };
   }, [leagueId]);
 
-  // Pre-load prices for the top 50 (cached server-side, so this is cheap).
   useEffect(() => {
     let cancelled = false;
     async function loadPrices() {
@@ -109,6 +110,11 @@ export default function Draft() {
       cancelled = true;
     };
   }, []);
+
+  const me = useMemo(
+    () => players.find((p) => p.auth_user_id === user?.id) ?? null,
+    [players, user]
+  );
 
   const remainingMs = ds?.pick_deadline ? new Date(ds.pick_deadline).getTime() - now : 0;
   const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -164,10 +170,6 @@ export default function Draft() {
   }
 
   function requestDraft(ticker: string, price: number) {
-    if (!pin) {
-      setErr("Enter your PIN above first.");
-      return;
-    }
     setErr(null);
     setConfirming({ ticker, price });
   }
@@ -177,7 +179,7 @@ export default function Draft() {
     setSubmitting(true);
     setErr(null);
     try {
-      await fn.makePick({ player_id: me.id, pin, ticker: confirming.ticker });
+      await fn.makePick({ player_id: me.id, ticker: confirming.ticker });
       setConfirming(null);
       setSearch("");
       setCustomQuote(null);
@@ -188,8 +190,19 @@ export default function Draft() {
     }
   }
 
-  if (!leagueId) return <Center>Missing league id.</Center>;
   if (!league || !ds) return <Center>Loading draft…</Center>;
+  if (!me) {
+    return (
+      <div className="max-w-md mx-auto py-16 px-6 text-center space-y-3">
+        <div className="text-5xl">🙅</div>
+        <h1 className="text-2xl font-bold">You're not in this league</h1>
+        <p className="text-gray-400">
+          {user?.email} isn't an approved player. Ask the admin for an invite link, or sign out and sign in with the email you joined with.
+        </p>
+        <a href={`/?league=${leagueId}`} className="btn-ghost inline-block">View leaderboard</a>
+      </div>
+    );
+  }
   if (ds.status === "complete") {
     return (
       <div className="max-w-2xl mx-auto py-16 px-6 text-center space-y-3">
@@ -201,7 +214,6 @@ export default function Draft() {
   }
 
   const currentPlayer = players.find((p) => p.id === ds.current_player_id);
-  const order = snakeOrder(players, league.stocks_per_player);
 
   return (
     <div className="max-w-7xl mx-auto py-6 px-6 space-y-6">
@@ -234,33 +246,19 @@ export default function Draft() {
                 <h2 className="font-semibold">Available stocks</h2>
                 <p className="text-xs text-gray-500">
                   {isMyTurn
-                    ? "Enter your PIN, then click Draft on any row."
+                    ? "Click Draft on any row to make your pick."
                     : `Waiting for ${currentPlayer?.name} to pick…`}
                 </p>
               </div>
-              <div className="flex gap-3 items-end">
-                <div>
-                  <label htmlFor="d-pin" className="label">Your PIN</label>
-                  <input
-                    id="d-pin"
-                    inputMode="numeric"
-                    maxLength={4}
-                    className="input tracking-widest text-center text-lg w-28"
-                    value={pin}
-                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-                    placeholder="••••"
-                  />
-                </div>
-                <div className="flex-1 min-w-[12rem]">
-                  <label htmlFor="d-search" className="label">Search ticker, name, or sector</label>
-                  <input
-                    id="d-search"
-                    className="input"
-                    placeholder="e.g. NVDA, healthcare, ROKU"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
+              <div className="flex-1 max-w-sm">
+                <label htmlFor="d-search" className="label">Search ticker, name, or sector</label>
+                <input
+                  id="d-search"
+                  className="input"
+                  placeholder="e.g. NVDA, healthcare, ROKU"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
               </div>
             </div>
 
@@ -380,7 +378,7 @@ export default function Draft() {
 
           <div className="card">
             <h2 className="font-semibold mb-3">Draft board</h2>
-            <DraftBoard order={order} players={players} holdings={holdings} stocksPerPlayer={league.stocks_per_player} />
+            <DraftBoard players={players} holdings={holdings} stocksPerPlayer={league.stocks_per_player} />
           </div>
         </div>
 
@@ -415,21 +413,11 @@ export default function Draft() {
   );
 }
 
-function snakeOrder(players: Player[], rounds: number): { round: number; playerId: string }[] {
-  const order: { round: number; playerId: string }[] = [];
-  for (let r = 1; r <= rounds; r++) {
-    const seq = r % 2 === 1 ? players : [...players].reverse();
-    for (const p of seq) order.push({ round: r, playerId: p.id });
-  }
-  return order;
-}
-
 function DraftBoard({
   players,
   holdings,
   stocksPerPlayer,
 }: {
-  order: { round: number; playerId: string }[];
   players: Player[];
   holdings: Holding[];
   stocksPerPlayer: number;

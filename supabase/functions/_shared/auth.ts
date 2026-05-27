@@ -1,51 +1,50 @@
-import bcrypt from "https://esm.sh/bcryptjs@2.4.3";
-import { create, verify, getNumericDate } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
+// Auth helpers backed by Supabase Auth.
+// All non-public Edge Functions expect `verify_jwt = true` in config.toml,
+// which means Supabase has already validated the JWT before invoking us.
+// We just need to resolve user_id from the bearer token to authorize actions.
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { serviceClient } from "./supabase.ts";
 
-const enc = new TextEncoder();
-let _key: CryptoKey | null = null;
+export type AuthUser = { id: string; email: string | null };
 
-async function jwtKey(): Promise<CryptoKey> {
-  if (_key) return _key;
-  const secret = Deno.env.get("ADMIN_JWT_SECRET");
-  if (!secret) throw new Error("ADMIN_JWT_SECRET not set");
-  _key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-  return _key;
-}
+export async function requireUser(req: Request): Promise<AuthUser> {
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  if (!token) throw new Error("Missing Authorization header");
 
-export async function hash(plaintext: string): Promise<string> {
-  return bcrypt.hashSync(plaintext, 10);
-}
-
-export async function compare(plaintext: string, hashed: string): Promise<boolean> {
-  return bcrypt.compareSync(plaintext, hashed);
-}
-
-export async function signAdminToken(league_id: string, ttlSec = 12 * 3600): Promise<string> {
-  return await create(
-    { alg: "HS256", typ: "JWT" },
-    { league_id, role: "admin", exp: getNumericDate(ttlSec) },
-    await jwtKey(),
-  );
-}
-
-export async function verifyAdminToken(token: string): Promise<{ league_id: string }> {
-  const payload = await verify(token, await jwtKey());
-  if (payload.role !== "admin" || typeof payload.league_id !== "string") {
-    throw new Error("Invalid admin token");
-  }
-  return { league_id: payload.league_id };
-}
-
-export function requireAdminTokenForLeague(req: Request, league_id: string): Promise<void> {
-  const token = req.headers.get("x-admin-token");
-  if (!token) throw new Error("Missing admin token");
-  return verifyAdminToken(token).then((p) => {
-    if (p.league_id !== league_id) throw new Error("Admin token league mismatch");
+  // Use a fresh client with the user's token to resolve identity.
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const sb = createClient(url, anon, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false },
   });
+  const { data, error } = await sb.auth.getUser(token);
+  if (error || !data.user) throw new Error("Invalid session");
+  return { id: data.user.id, email: data.user.email ?? null };
+}
+
+export async function requireLeagueAdmin(req: Request, league_id: string): Promise<AuthUser> {
+  const user = await requireUser(req);
+  const sb = serviceClient();
+  const { data } = await sb.from("leagues").select("admin_user_id").eq("id", league_id).maybeSingle();
+  if (!data) throw new Error("League not found");
+  if (data.admin_user_id !== user.id) throw new Error("Not the league admin");
+  return user;
+}
+
+export async function requirePlayerOwner(req: Request, player_id: string): Promise<{
+  user: AuthUser;
+  player: { id: string; name: string; league_id: string; status: string };
+}> {
+  const user = await requireUser(req);
+  const sb = serviceClient();
+  const { data } = await sb
+    .from("players")
+    .select("id, name, league_id, status, auth_user_id")
+    .eq("id", player_id)
+    .maybeSingle();
+  if (!data) throw new Error("Player not found");
+  if (data.auth_user_id !== user.id) throw new Error("Not authorized for this player");
+  return { user, player: data };
 }

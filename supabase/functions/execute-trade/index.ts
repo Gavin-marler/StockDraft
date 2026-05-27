@@ -1,25 +1,25 @@
 import { preflight, json, err } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/supabase.ts";
-import { compare } from "../_shared/auth.ts";
+import { requirePlayerOwner } from "../_shared/auth.ts";
 import { quote } from "../_shared/finnhub.ts";
 
 Deno.serve(async (req) => {
   const p = preflight(req); if (p) return p;
   if (req.method !== "POST") return err("Method not allowed", 405);
   try {
-    const { player_id, pin, sell_holding_id, buy_ticker } = await req.json();
-    if (!player_id || !pin || !sell_holding_id || !buy_ticker) return err("missing fields");
+    const { player_id, sell_holding_id, buy_ticker } = await req.json();
+    if (!player_id || !sell_holding_id || !buy_ticker) return err("missing fields");
     const buyT = String(buy_ticker).toUpperCase();
 
-    const sb = serviceClient();
-    const { data: player } = await sb
-      .from("players")
-      .select("id, name, league_id, pin_hash, status, last_trade_month")
-      .eq("id", player_id)
-      .maybeSingle();
-    if (!player) return err("Player not found", 404);
+    const { player } = await requirePlayerOwner(req, player_id);
     if (player.status !== "approved") return err("Player not approved", 403);
-    if (!(await compare(pin, player.pin_hash))) return err("Incorrect PIN", 401);
+
+    const sb = serviceClient();
+    const { data: playerExtra } = await sb
+      .from("players")
+      .select("name, last_trade_month")
+      .eq("id", player_id)
+      .single();
 
     const { data: league } = await sb
       .from("leagues")
@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
     if (!league || league.status !== "active") return err("League is not active");
 
     const month = new Date().toISOString().slice(0, 7);
-    if (player.last_trade_month === month) return err("Already traded this month");
+    if (playerExtra?.last_trade_month === month) return err("Already traded this month");
 
     const { data: holding } = await sb
       .from("holdings")
@@ -38,7 +38,6 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (!holding || holding.player_id !== player_id) return err("Holding not found", 404);
 
-    // Check buy ticker is a free agent
     const { data: heldRows } = await sb
       .from("holdings")
       .select("id, ticker, players!inner(league_id)")
@@ -46,20 +45,16 @@ Deno.serve(async (req) => {
       .eq("ticker", buyT);
     if ((heldRows || []).length > 0) return err(`${buyT} is currently held by someone in this league`);
 
-    // Current slot value
     let currentValue = Number(holding.slot_value_usd);
     if (!holding.is_cash && holding.ticker) {
       const q = await quote(holding.ticker);
       if (q) currentValue = q.price * Number(holding.shares);
-      // else: stock delisted — fall back to slot_value_usd as cash equivalent
     }
 
-    // Live price of buy ticker
     const buyQ = await quote(buyT);
     if (!buyQ) return err(`No price found for ${buyT}`);
     const newShares = currentValue / buyQ.price;
 
-    // Replace holding atomically (delete + insert)
     await sb.from("holdings").delete().eq("id", holding.id);
     await sb.from("holdings").insert({
       player_id,
@@ -70,7 +65,6 @@ Deno.serve(async (req) => {
       is_cash: false,
     });
     await sb.from("players").update({ last_trade_month: month }).eq("id", player_id);
-
     await sb.from("prices").upsert({
       ticker: buyT,
       price: buyQ.price,
@@ -84,11 +78,11 @@ Deno.serve(async (req) => {
       player_id,
       type: "trade",
       ticker: buyT,
-      description: `${player.name} traded ${oldLabel} for ${buyT}`,
+      description: `${playerExtra?.name ?? "Player"} traded ${oldLabel} for ${buyT}`,
     });
 
     return json({ ok: true });
   } catch (e: any) {
-    return err(e?.message || "unknown", 500);
+    return err(e?.message || "unknown", 401);
   }
 });

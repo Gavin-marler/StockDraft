@@ -1,6 +1,6 @@
 import { preflight, json, err } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/supabase.ts";
-import { compare } from "../_shared/auth.ts";
+import { requirePlayerOwner } from "../_shared/auth.ts";
 import { advanceDraft, draftedTickers, executePick } from "../_shared/draft.ts";
 import { quote } from "../_shared/finnhub.ts";
 
@@ -8,20 +8,14 @@ Deno.serve(async (req) => {
   const p = preflight(req); if (p) return p;
   if (req.method !== "POST") return err("Method not allowed", 405);
   try {
-    const { player_id, pin, ticker } = await req.json();
-    if (!player_id || !pin || !ticker) return err("player_id, pin, ticker required");
+    const { player_id, ticker } = await req.json();
+    if (!player_id || !ticker) return err("player_id and ticker required");
     const t = String(ticker).toUpperCase();
 
-    const sb = serviceClient();
-    const { data: player } = await sb
-      .from("players")
-      .select("id, league_id, pin_hash, status")
-      .eq("id", player_id)
-      .maybeSingle();
-    if (!player) return err("Player not found", 404);
+    const { player } = await requirePlayerOwner(req, player_id);
     if (player.status !== "approved") return err("Player not approved", 403);
-    if (!(await compare(pin, player.pin_hash))) return err("Incorrect PIN", 401);
 
+    const sb = serviceClient();
     const { data: ds } = await sb
       .from("draft_state")
       .select("status, current_player_id, pick_deadline")
@@ -35,13 +29,23 @@ Deno.serve(async (req) => {
     const drafted = await draftedTickers(player.league_id);
     if (drafted.has(t)) return err(`${t} has already been drafted`);
 
+    // Live quote, falling back to cache (≤ 10 min old) if Finnhub is rate-limited.
+    let price: number | null = null;
     const q = await quote(t);
-    if (!q) return err(`No price found for ${t}`);
+    if (q) {
+      price = q.price;
+    } else {
+      const { data: cached } = await sb.from("prices").select("price, fetched_at").eq("ticker", t).maybeSingle();
+      if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 10 * 60 * 1000) {
+        price = Number(cached.price);
+      }
+    }
+    if (price === null) return err(`No price found for ${t}`);
 
-    await executePick(player.league_id, player_id, t, q.price, false);
+    await executePick(player.league_id, player_id, t, price, false);
     await advanceDraft(player.league_id);
     return json({ ok: true });
   } catch (e: any) {
-    return err(e?.message || "unknown", 500);
+    return err(e?.message || "unknown", 401);
   }
 });

@@ -1,12 +1,13 @@
 import { preflight, json, err } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/supabase.ts";
+import { requireLeagueAdmin } from "../_shared/auth.ts";
 import { batchQuotes } from "../_shared/finnhub.ts";
 
+// Called either by pg_cron (CRON_SECRET header) for a sweep, or by an admin for one league.
 Deno.serve(async (req) => {
   const p = preflight(req); if (p) return p;
   if (req.method !== "POST") return err("Method not allowed", 405);
   try {
-    // Auth: either CRON_SECRET header or admin token (for a specific league)
     const cronHeader = req.headers.get("x-cron-secret");
     const expected = Deno.env.get("CRON_SECRET");
     const body = await req.json().catch(() => ({}));
@@ -16,11 +17,7 @@ Deno.serve(async (req) => {
     if (cronHeader && expected && cronHeader === expected) {
       leagueFilter = null;
     } else if (specificLeague) {
-      const { verifyAdminToken } = await import("../_shared/auth.ts");
-      const tok = req.headers.get("x-admin-token");
-      if (!tok) return err("admin token required", 401);
-      const t = await verifyAdminToken(tok);
-      if (t.league_id !== specificLeague) return err("admin token mismatch", 403);
+      await requireLeagueAdmin(req, specificLeague);
       leagueFilter = [specificLeague];
     } else {
       return err("unauthorized", 401);
@@ -41,7 +38,6 @@ Deno.serve(async (req) => {
 
     const finalized: string[] = [];
     for (const lg of leagues || []) {
-      // Refresh prices for all holdings in this league
       const { data: holdings } = await sb
         .from("holdings")
         .select("id, player_id, ticker, shares, slot_value_usd, is_cash, players!inner(id, name, league_id)")
@@ -50,7 +46,6 @@ Deno.serve(async (req) => {
         new Set(((holdings as any[]) || []).filter((h) => h.ticker).map((h) => h.ticker as string)),
       );
       const prices = await batchQuotes(tickers);
-      // Persist closing prices
       const rows = Object.entries(prices)
         .filter(([_, v]) => v)
         .map(([t, v]) => ({
@@ -61,18 +56,15 @@ Deno.serve(async (req) => {
         }));
       if (rows.length) await sb.from("prices").upsert(rows);
 
-      // Compute winner
       const valueByPlayer = new Map<string, { name: string; value: number }>();
       for (const h of (holdings as any[]) || []) {
-        const pid = h.player_id;
-        const name = h.players.name;
-        const cur = valueByPlayer.get(pid) || { name, value: 0 };
+        const cur = valueByPlayer.get(h.player_id) || { name: h.players.name, value: 0 };
         if (h.is_cash || !h.ticker) cur.value += Number(h.slot_value_usd);
         else {
           const p = prices[h.ticker];
           cur.value += p ? p.price * Number(h.shares) : Number(h.slot_value_usd);
         }
-        valueByPlayer.set(pid, cur);
+        valueByPlayer.set(h.player_id, cur);
       }
       const winner = [...valueByPlayer.values()].sort((a, b) => b.value - a.value)[0];
 
@@ -86,6 +78,6 @@ Deno.serve(async (req) => {
     }
     return json({ ok: true, finalized });
   } catch (e: any) {
-    return err(e?.message || "unknown", 500);
+    return err(e?.message || "unknown", 401);
   }
 });

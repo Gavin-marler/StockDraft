@@ -1,27 +1,31 @@
 import { useState } from "react";
 import { fn } from "../api/functions";
+import SignInGate from "../components/SignInGate";
 
 export default function Create() {
+  return (
+    <SignInGate
+      title="Sign in to create a league"
+      hint="You'll be the admin. We'll send a magic link to your email."
+    >
+      <CreateForm />
+    </SignInGate>
+  );
+}
+
+function CreateForm() {
   const [name, setName] = useState("");
   const [budget, setBudget] = useState(500);
   const [stocksPerPlayer, setStocksPerPlayer] = useState(5);
   const [maxPlayers, setMaxPlayers] = useState(6);
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [result, setResult] = useState<{
-    league_id: string;
-    invite_token: string;
-    admin_token: string;
-  } | null>(null);
+  const [result, setResult] = useState<{ league_id: string; invite_token: string } | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    if (password.length < 6) return setErr("Admin password must be at least 6 characters.");
-    if (password !== confirm) return setErr("Passwords do not match.");
     if (!name.trim()) return setErr("League name is required.");
     setLoading(true);
     try {
@@ -30,10 +34,8 @@ export default function Create() {
         budget,
         stocks_per_player: stocksPerPlayer,
         max_players: maxPlayers,
-        admin_password: password,
         start_date: startDate,
       });
-      localStorage.setItem(`admin_token:${r.league_id}`, r.admin_token);
       setResult(r);
     } catch (e: any) {
       setErr(e.message);
@@ -55,7 +57,7 @@ export default function Create() {
             <CopyField value={inviteUrl} />
           </div>
           <div>
-            <div className="label">Admin dashboard (keep private)</div>
+            <div className="label">Admin dashboard</div>
             <CopyField value={adminUrl} />
           </div>
           <div>
@@ -63,7 +65,12 @@ export default function Create() {
             <CopyField value={leaderboardUrl} />
           </div>
         </div>
-        <a href={adminUrl} className="btn-primary block text-center">Go to admin dashboard</a>
+        <a href={inviteUrl} className="btn-primary block text-center">
+          Join your own league as a player →
+        </a>
+        <p className="text-xs text-gray-500 text-center">
+          As admin you can also join as a player — your name will appear on the leaderboard.
+        </p>
       </div>
     );
   }
@@ -124,26 +131,6 @@ export default function Create() {
               onChange={(e) => setStartDate(e.target.value)}
             />
           </div>
-        </div>
-        <div>
-          <label htmlFor="f-pw" className="label">Admin password</label>
-          <input
-            id="f-pw"
-            type="password"
-            className="input"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="f-pwc" className="label">Confirm admin password</label>
-          <input
-            id="f-pwc"
-            type="password"
-            className="input"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-          />
         </div>
         {err && <div className="text-loss text-sm">{err}</div>}
         <button className="btn-primary w-full" disabled={loading}>

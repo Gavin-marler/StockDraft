@@ -14,20 +14,17 @@ type Holding = {
 
 export default function TradeModal({
   player,
-  leagueId,
   holdings,
   heldTickers,
   prices,
   onClose,
 }: {
   player: Player;
-  leagueId: string;
   holdings: Holding[];
   heldTickers: Set<string>;
   prices: Record<string, { price: number }>;
   onClose: () => void;
 }) {
-  const [pin, setPin] = useState("");
   const [sellId, setSellId] = useState<string>(holdings[0]?.id || "");
   const [buyTicker, setBuyTicker] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -43,14 +40,13 @@ export default function TradeModal({
 
   async function submit() {
     setErr(null);
-    if (!/^\d{4}$/.test(pin)) return setErr("Enter your 4-digit PIN.");
     if (!sellId) return setErr("Pick a stock to sell.");
     const t = buyTicker.trim().toUpperCase();
     if (!t) return setErr("Enter a ticker to buy.");
     if (heldTickers.has(t)) return setErr(`${t} is currently held by someone.`);
     setSubmitting(true);
     try {
-      await fn.executeTrade({ player_id: player.id, pin, sell_holding_id: sellId, buy_ticker: t });
+      await fn.executeTrade({ player_id: player.id, sell_holding_id: sellId, buy_ticker: t });
       onClose();
     } catch (e: any) {
       setErr(e.message);
@@ -64,9 +60,14 @@ export default function TradeModal({
       <div className="card max-w-md w-full" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-xl font-bold mb-4">Trade — {player.name}</h3>
         {alreadyTraded ? (
-          <div className="text-sm text-loss mb-4">
-            {player.name} has already traded this month ({thisMonth}). Next trade available next month.
-          </div>
+          <>
+            <div className="text-sm text-loss mb-4">
+              You've already traded this month ({thisMonth}). Next trade available next month.
+            </div>
+            <div className="flex justify-end">
+              <button className="btn-ghost" onClick={onClose}>Close</button>
+            </div>
+          </>
         ) : (
           <>
             <div className="space-y-3">
@@ -107,16 +108,6 @@ export default function TradeModal({
                   ))}
                 </div>
               </div>
-              <div>
-                <label className="label">Your PIN</label>
-                <input
-                  inputMode="numeric"
-                  maxLength={4}
-                  className="input tracking-widest text-center text-xl w-32"
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-                />
-              </div>
               {err && <div className="text-loss text-sm">{err}</div>}
             </div>
             <div className="flex justify-end gap-2 mt-4">
@@ -126,11 +117,6 @@ export default function TradeModal({
               </button>
             </div>
           </>
-        )}
-        {alreadyTraded && (
-          <div className="flex justify-end">
-            <button className="btn-ghost" onClick={onClose}>Close</button>
-          </div>
         )}
       </div>
     </div>

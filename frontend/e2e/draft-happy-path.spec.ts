@@ -1,121 +1,123 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
+import { createClient } from "@supabase/supabase-js";
 
-// End-to-end happy path:
-// 1. Admin creates a league
-// 2. Two players join via the invite link (separate browser contexts so localStorage is isolated)
-// 3. Admin approves both
-// 4. Admin starts the draft
-// 5. Each player makes one pick using the new ESPN-style picker
-// 6. Verify both picks land on the leaderboard
+// End-to-end happy path. Requires SUPABASE_SERVICE_ROLE_KEY in the env so we can
+// seed test users via the admin API (bypassing magic-link email flow).
 
-const ADMIN_PW = "playwright-test-123";
-const PIN_A = "1111";
-const PIN_B = "2222";
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL!;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY!;
+const PASSWORD = "playwright-e2e-password";
 
-function uniqueName(prefix: string) {
-  return `${prefix}-${Date.now().toString(36).slice(-5)}`;
+if (!SUPABASE_URL || !SERVICE_KEY || !ANON_KEY) {
+  throw new Error(
+    "Missing env. Set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY before running.",
+  );
 }
 
-async function createLeagueAsAdmin(page: Page, leagueName: string) {
-  await page.goto("/create");
-  await page.getByLabel("League name").fill(leagueName);
-  await page.getByLabel("Admin password", { exact: true }).fill(ADMIN_PW);
-  await page.getByLabel("Confirm admin password").fill(ADMIN_PW);
-  await page.getByRole("button", { name: "Create league" }).click();
+const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  await expect(page.getByRole("heading", { name: "League created!" })).toBeVisible({ timeout: 30_000 });
-
-  const inviteInput = page.locator('input[readonly][value*="/join?token="]').first();
-  const adminInput = page.locator('input[readonly][value*="/admin?league="]').first();
-  const inviteUrl = await inviteInput.inputValue();
-  const adminUrl = await adminInput.inputValue();
-  return { inviteUrl, adminUrl };
+function uniqueEmail(prefix: string) {
+  return `e2e-${prefix}-${Date.now().toString(36).slice(-5)}@stockdraft.test`;
 }
 
-async function joinAs(ctx: BrowserContext, inviteUrl: string, name: string, pin: string) {
+async function seedUser(email: string) {
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: PASSWORD,
+    email_confirm: true,
+  });
+  if (error) throw new Error(`createUser(${email}): ${error.message}`);
+  return data.user!.id;
+}
+
+async function signIn(ctx: BrowserContext, email: string) {
   const page = await ctx.newPage();
-  await page.goto(inviteUrl);
-  await page.getByLabel("Your name").fill(name);
-  await page.getByLabel("4-digit PIN").fill(pin);
-  await page.getByLabel("Confirm PIN").fill(pin);
-  await page.getByRole("button", { name: "Join league" }).click();
-  await expect(page.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
+  await page.goto("/");
+  await page.evaluate(
+    async ({ url, key, email, password }) => {
+      const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.45.0");
+      const sb = createClient(url, key, {
+        auth: { persistSession: true, storageKey: "stockdraft-auth" },
+      });
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw new Error(error.message);
+    },
+    { url: SUPABASE_URL, key: ANON_KEY, email, password: PASSWORD },
+  );
   return page;
 }
 
-async function approveExactly(adminPage: Page, expected: number) {
-  // Wait until both expected join requests show up before approving.
-  await expect(adminPage.locator("button", { hasText: new RegExp(`^Pending \\(${expected}\\)`) })).toBeVisible({
-    timeout: 20_000,
-  });
-  await adminPage.locator("button", { hasText: /^Pending \(/ }).click();
+test("admin creates league, two players join, draft starts, both pick", async ({ browser }) => {
+  const adminEmail = uniqueEmail("admin");
+  const aliceEmail = uniqueEmail("alice");
+  const bobEmail = uniqueEmail("bob");
+  const seeded = await Promise.all([seedUser(adminEmail), seedUser(aliceEmail), seedUser(bobEmail)]);
 
-  for (let i = 0; i < expected + 2; i++) {
+  // --- Admin: create league
+  const adminCtx = await browser.newContext();
+  const adminPage = await signIn(adminCtx, adminEmail);
+  adminPage.on("dialog", (d) => d.accept());
+  await adminPage.goto("/create");
+  const leagueName = `E2E-${Date.now().toString(36).slice(-5)}`;
+  await adminPage.getByLabel("League name").fill(leagueName);
+  await adminPage.getByRole("button", { name: "Create league" }).click();
+  await expect(adminPage.getByRole("heading", { name: "League created!" })).toBeVisible({ timeout: 30_000 });
+
+  const inviteUrl = await adminPage.locator('input[readonly][value*="/join?token="]').first().inputValue();
+  const adminUrl = await adminPage.locator('input[readonly][value*="/admin?league="]').first().inputValue();
+  const leagueId = new URL(adminUrl).searchParams.get("league")!;
+
+  // --- Players: sign in then join
+  const aliceCtx = await browser.newContext();
+  const alicePage = await signIn(aliceCtx, aliceEmail);
+  await alicePage.goto(inviteUrl);
+  await alicePage.getByLabel("Display name").fill("Alice");
+  await alicePage.getByRole("button", { name: "Request to join" }).click();
+  await expect(alicePage.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
+
+  const bobCtx = await browser.newContext();
+  const bobPage = await signIn(bobCtx, bobEmail);
+  await bobPage.goto(inviteUrl);
+  await bobPage.getByLabel("Display name").fill("Bob");
+  await bobPage.getByRole("button", { name: "Request to join" }).click();
+  await expect(bobPage.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
+
+  // --- Admin: approve both
+  await adminPage.goto(adminUrl);
+  await expect(adminPage.locator("button", { hasText: /^Pending \(2\)/ })).toBeVisible({ timeout: 20_000 });
+  for (let i = 0; i < 4; i++) {
     const buttons = adminPage.getByRole("button", { name: "Approve", exact: true });
     if ((await buttons.count()) === 0) break;
     await buttons.first().click();
     await adminPage.waitForTimeout(500);
   }
-
-  // Confirm the tab counter has dropped to zero.
-  await expect(adminPage.locator("button", { hasText: /^Pending \(0\)/ })).toBeVisible({ timeout: 15_000 });
-}
-
-test("admin can create a league, two players join, draft starts, both make a pick", async ({ browser }) => {
-  const leagueName = uniqueName("E2E");
-
-  // --- Admin context
-  const adminCtx = await browser.newContext();
-  const adminPage = await adminCtx.newPage();
-  adminPage.on("dialog", (d) => d.accept());
-  const { inviteUrl, adminUrl } = await createLeagueAsAdmin(adminPage, leagueName);
-  expect(inviteUrl).toContain("/join?token=");
-  expect(adminUrl).toContain("/admin?league=");
-
-  // --- Player A
-  const ctxA = await browser.newContext();
-  const pageA = await joinAs(ctxA, inviteUrl, "Alice", PIN_A);
-
-  // --- Player B
-  const ctxB = await browser.newContext();
-  const pageB = await joinAs(ctxB, inviteUrl, "Bob", PIN_B);
-
-  // --- Admin: approve both
-  await adminPage.goto(adminUrl);
-  await approveExactly(adminPage, 2);
+  await expect(adminPage.locator("button", { hasText: /^Pending \(0\)/ })).toBeVisible();
 
   // --- Admin: start draft
   await adminPage.getByRole("button", { name: "draft", exact: true }).click();
   await expect(adminPage.getByRole("button", { name: "Start draft" })).toBeEnabled();
   await adminPage.getByRole("button", { name: "Start draft" }).click();
-
-  // Admin lands on /draft after starting.
   await expect(adminPage).toHaveURL(/\/draft\?league=/, { timeout: 30_000 });
 
-  // --- Player A: navigate to draft, make a pick
-  const leagueId = new URL(adminUrl).searchParams.get("league")!;
-  await pageA.goto(`/draft?league=${leagueId}`);
-  // Whoever is on the clock first picks AAPL.
-  // Player A is the first-joined, so they pick first in round 1.
-  await pageA.waitForSelector("text=On the clock");
-  await pageA.getByLabel("Your PIN").fill(PIN_A);
-  const aaplRow = pageA.getByRole("row", { name: /AAPL/ });
+  // --- Alice picks first
+  await alicePage.goto(`/draft?league=${leagueId}`);
+  await alicePage.waitForSelector("text=On the clock");
+  const aaplRow = alicePage.getByRole("row", { name: /AAPL/ });
   await aaplRow.getByRole("button", { name: "Draft" }).click();
-  await pageA.getByRole("button", { name: "Confirm" }).click();
-  await expect(pageA.getByText(/Alice drafted AAPL/)).toBeVisible({ timeout: 15_000 });
+  await alicePage.getByRole("button", { name: "Confirm" }).click();
+  await expect(alicePage.getByText(/Alice drafted AAPL/)).toBeVisible({ timeout: 15_000 });
 
-  // --- Player B: should now be on the clock; pick MSFT
-  await pageB.goto(`/draft?league=${leagueId}`);
-  await pageB.waitForSelector("text=On the clock");
-  await expect(pageB.getByText(/Bob\s*\(your pick\)/)).toBeVisible({ timeout: 15_000 });
-  await pageB.getByLabel("Your PIN").fill(PIN_B);
-  const msftRow = pageB.getByRole("row", { name: /MSFT/ });
+  // --- Bob picks second
+  await bobPage.goto(`/draft?league=${leagueId}`);
+  await bobPage.waitForSelector("text=On the clock");
+  await expect(bobPage.getByText(/Bob\s*\(your pick\)/)).toBeVisible({ timeout: 15_000 });
+  const msftRow = bobPage.getByRole("row", { name: /MSFT/ });
   await msftRow.getByRole("button", { name: "Draft" }).click();
-  await pageB.getByRole("button", { name: "Confirm" }).click();
-  await expect(pageB.getByText(/Bob drafted MSFT/)).toBeVisible({ timeout: 15_000 });
+  await bobPage.getByRole("button", { name: "Confirm" }).click();
+  await expect(bobPage.getByText(/Bob drafted MSFT/)).toBeVisible({ timeout: 15_000 });
 
   // Cleanup
-  await adminCtx.close();
-  await ctxA.close();
-  await ctxB.close();
+  await Promise.all([adminCtx.close(), aliceCtx.close(), bobCtx.close()]);
+  await Promise.all(seeded.map((id) => admin.auth.admin.deleteUser(id)));
 });

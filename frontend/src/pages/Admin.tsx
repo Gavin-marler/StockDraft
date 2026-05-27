@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { fn } from "../api/functions";
 import { supabase } from "../api/supabaseClient";
+import SignInGate from "../components/SignInGate";
+import { useAuth } from "../hooks/useAuth";
 
 type League = {
   id: string;
@@ -13,40 +15,45 @@ type League = {
   invite_token: string;
   start_date: string;
   end_date: string;
+  admin_user_id: string;
 };
 type Player = {
   id: string;
   name: string;
+  email: string | null;
   status: "pending" | "approved";
-  last_trade_month: string | null;
 };
 
 export default function Admin() {
   const [params] = useSearchParams();
   const leagueId = params.get("league") || "";
-  const [token, setToken] = useState<string | null>(
-    () => localStorage.getItem(`admin_token:${leagueId}`)
+  if (!leagueId) return <Center>Missing league id in URL.</Center>;
+  return (
+    <SignInGate title="Sign in as the league admin">
+      <AdminDashboard leagueId={leagueId} />
+    </SignInGate>
   );
-  const [pw, setPw] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+}
+
+function AdminDashboard({ leagueId }: { leagueId: string }) {
+  const { user } = useAuth();
   const [league, setLeague] = useState<League | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [tab, setTab] = useState<"pending" | "approved" | "draft" | "settings">("pending");
-  const [resetLink, setResetLink] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   async function load() {
     const { data: l } = await supabase.from("leagues").select("*").eq("id", leagueId).single();
     if (l) setLeague(l as League);
     const { data: ps } = await supabase
       .from("players")
-      .select("id, name, status, last_trade_month")
+      .select("id, name, email, status")
       .eq("league_id", leagueId)
       .order("created_at", { ascending: true });
     setPlayers((ps as Player[]) || []);
   }
 
   useEffect(() => {
-    if (!token || !leagueId) return;
     load();
     const ch = supabase
       .channel(`admin:${leagueId}`)
@@ -56,82 +63,75 @@ export default function Admin() {
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [token, leagueId]);
+  }, [leagueId]);
 
-  async function login(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    try {
-      const r = await fn.adminLogin({ league_id: leagueId, password: pw });
-      localStorage.setItem(`admin_token:${leagueId}`, r.admin_token);
-      setToken(r.admin_token);
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  }
+  if (!league) return <Center>Loading…</Center>;
 
-  if (!leagueId) return <Center>Missing league id in URL.</Center>;
-  if (!token) {
+  if (league.admin_user_id !== user?.id) {
     return (
-      <div className="max-w-md mx-auto py-12 px-6">
-        <h1 className="text-3xl font-bold mb-6">Admin login</h1>
-        <form onSubmit={login} className="card space-y-4">
-          <div>
-            <label htmlFor="a-pw" className="label">Admin password</label>
-            <input
-              id="a-pw"
-              type="password"
-              className="input"
-              value={pw}
-              onChange={(e) => setPw(e.target.value)}
-            />
-          </div>
-          {err && <div className="text-loss text-sm">{err}</div>}
-          <button className="btn-primary w-full">Login</button>
-        </form>
+      <div className="max-w-md mx-auto py-16 px-6 text-center space-y-3">
+        <div className="text-5xl">🚫</div>
+        <h1 className="text-2xl font-bold">Not the league admin</h1>
+        <p className="text-gray-400">
+          You're signed in as <span className="font-mono">{user?.email}</span>, but this league is managed
+          by someone else.
+        </p>
       </div>
     );
   }
 
   const pending = players.filter((p) => p.status === "pending");
   const approved = players.filter((p) => p.status === "approved");
-  const inviteUrl = league ? `${window.location.origin}/join?token=${league.invite_token}` : "";
+  const inviteUrl = `${window.location.origin}/join?token=${league.invite_token}`;
 
   async function approve(playerId: string, action: "approve" | "reject") {
-    await fn.approvePlayer({ player_id: playerId, action }, token!);
-    load();
-  }
-
-  async function resetPin(playerId: string) {
-    setResetLink(null);
-    const r = await fn.generateResetLink({ player_id: playerId }, token!);
-    setResetLink(`${window.location.origin}/reset-pin?token=${r.token}`);
+    setErr(null);
+    try {
+      await fn.approvePlayer({ player_id: playerId, action });
+      load();
+    } catch (e: any) {
+      setErr(e.message);
+    }
   }
 
   async function startDraft() {
     if (!confirm("Start the draft now? This expires the invite link.")) return;
-    await fn.startDraft({ league_id: leagueId }, token!);
-    window.location.href = `/draft?league=${leagueId}`;
+    setErr(null);
+    try {
+      await fn.startDraft({ league_id: leagueId });
+      window.location.href = `/draft?league=${leagueId}`;
+    } catch (e: any) {
+      setErr(e.message);
+    }
   }
 
   async function skipPick() {
     if (!confirm("Skip current player's turn (auto-draft)?")) return;
-    await fn.autoDraft({ league_id: leagueId, admin: true }, token!);
+    setErr(null);
+    try {
+      await fn.autoDraft({ league_id: leagueId, admin: true });
+    } catch (e: any) {
+      setErr(e.message);
+    }
   }
 
   async function delLeague() {
     if (!confirm("DELETE this league and all data? This cannot be undone.")) return;
-    await fn.deleteLeague({ league_id: leagueId }, token!);
-    localStorage.removeItem(`admin_token:${leagueId}`);
-    window.location.href = "/";
+    setErr(null);
+    try {
+      await fn.deleteLeague({ league_id: leagueId });
+      window.location.href = "/";
+    } catch (e: any) {
+      setErr(e.message);
+    }
   }
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-6 space-y-6">
       <div className="flex items-baseline justify-between">
         <div>
-          <h1 className="text-3xl font-bold">{league?.name || "League"}</h1>
-          <div className="text-xs text-gray-500">Status: {league?.status}</div>
+          <h1 className="text-3xl font-bold">{league.name}</h1>
+          <div className="text-xs text-gray-500">Status: {league.status}</div>
         </div>
         <a href={`/?league=${leagueId}`} className="btn-ghost text-sm">View leaderboard</a>
       </div>
@@ -148,6 +148,8 @@ export default function Admin() {
         ))}
       </div>
 
+      {err && <div className="text-loss text-sm">{err}</div>}
+
       {tab === "pending" && (
         <div className="card">
           {pending.length === 0 ? (
@@ -156,7 +158,10 @@ export default function Admin() {
             <ul className="divide-y divide-gray-800">
               {pending.map((p) => (
                 <li key={p.id} className="flex items-center justify-between py-3">
-                  <span className="font-medium">{p.name}</span>
+                  <div>
+                    <div className="font-medium">{p.name}</div>
+                    <div className="text-xs text-gray-500">{p.email}</div>
+                  </div>
                   <div className="flex gap-2">
                     <button className="btn-primary text-sm" onClick={() => approve(p.id, "approve")}>Approve</button>
                     <button className="btn-ghost text-sm" onClick={() => approve(p.id, "reject")}>Reject</button>
@@ -169,59 +174,49 @@ export default function Admin() {
       )}
 
       {tab === "approved" && (
-        <div className="space-y-4">
-          {resetLink && (
-            <div className="card border-accent">
-              <div className="label">One-time reset link (send to player)</div>
-              <input className="input font-mono text-xs" readOnly value={resetLink} />
-            </div>
+        <div className="card">
+          {approved.length === 0 ? (
+            <div className="text-gray-500 text-sm">No approved players yet.</div>
+          ) : (
+            <ul className="divide-y divide-gray-800">
+              {approved.map((p) => (
+                <li key={p.id} className="flex items-center justify-between py-3">
+                  <div>
+                    <div className="font-medium">{p.name}</div>
+                    <div className="text-xs text-gray-500">{p.email}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
-          <div className="card">
-            {approved.length === 0 ? (
-              <div className="text-gray-500 text-sm">No approved players yet.</div>
-            ) : (
-              <ul className="divide-y divide-gray-800">
-                {approved.map((p) => (
-                  <li key={p.id} className="flex items-center justify-between py-3">
-                    <span className="font-medium">{p.name}</span>
-                    <button className="btn-ghost text-sm" onClick={() => resetPin(p.id)}>Reset PIN</button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
         </div>
       )}
 
       {tab === "draft" && (
         <div className="card space-y-4">
-          {league?.status === "open" && (
+          {league.status === "open" && (
             <>
               <p className="text-sm text-gray-400">
                 {approved.length} approved player{approved.length === 1 ? "" : "s"}. Need at least 2 to start.
               </p>
-              <button
-                className="btn-primary"
-                disabled={approved.length < 2}
-                onClick={startDraft}
-              >
+              <button className="btn-primary" disabled={approved.length < 2} onClick={startDraft}>
                 Start draft
               </button>
             </>
           )}
-          {league?.status === "drafting" && (
+          {league.status === "drafting" && (
             <>
               <a href={`/draft?league=${leagueId}`} className="btn-primary inline-block">Open draft room</a>
               <button className="btn-ghost ml-2" onClick={skipPick}>Skip current pick</button>
             </>
           )}
-          {(league?.status === "active" || league?.status === "complete") && (
+          {(league.status === "active" || league.status === "complete") && (
             <p className="text-gray-400 text-sm">Draft is complete.</p>
           )}
         </div>
       )}
 
-      {tab === "settings" && league && (
+      {tab === "settings" && (
         <div className="card space-y-4">
           <div>
             <div className="label">Invite link</div>
