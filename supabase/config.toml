@@ -40,5 +40,7 @@ verify_jwt = true
 # Public functions: anonymous leaderboard / cron sweeps.
 [functions.fetch-prices]
 verify_jwt = false
+[functions.lookup-ticker]
+verify_jwt = false
 [functions.finalize-league]
 verify_jwt = false

@@ -46,6 +46,14 @@ export default function TopBar() {
                   Draft
                 </NavLink>
               )}
+              {(ctx.status === "active" || ctx.status === "complete") && ctx.isPlayer && (
+                <NavLink
+                  to={`/portfolio?league=${ctx.id}`}
+                  active={isActive("/portfolio") && params.get("league") === ctx.id}
+                >
+                  My Portfolio
+                </NavLink>
+              )}
               {ctx.isAdmin && (
                 <NavLink
                   to={`/admin?league=${ctx.id}`}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { fn } from "../api/functions";
-import sp500 from "../data/sp500_top50.json";
+import TickerAutocomplete from "./TickerAutocomplete";
 
 type Player = { id: string; name: string; last_trade_month: string | null };
 type Holding = {
@@ -32,11 +32,6 @@ export default function TradeModal({
 
   const thisMonth = new Date().toISOString().slice(0, 7);
   const alreadyTraded = player.last_trade_month === thisMonth;
-
-  const available = useMemo(
-    () => sp500.filter((s) => !heldTickers.has(s.ticker)),
-    [heldTickers]
-  );
 
   async function submit() {
     setErr(null);
@@ -88,25 +83,15 @@ export default function TradeModal({
               </div>
               <div>
                 <label className="label">Buy ticker (free agent)</label>
-                <input
-                  className="input font-mono"
+                <TickerAutocomplete
                   value={buyTicker}
-                  onChange={(e) => setBuyTicker(e.target.value.toUpperCase())}
-                  placeholder="e.g. NFLX"
+                  onChange={setBuyTicker}
+                  placeholder="Start typing — e.g. MU"
+                  excludeTickers={heldTickers}
                 />
-                <div className="text-xs text-gray-500 mt-2">
-                  Available popular tickers:{" "}
-                  {available.slice(0, 12).map((s) => (
-                    <button
-                      key={s.ticker}
-                      type="button"
-                      className="font-mono mr-2 underline"
-                      onClick={() => setBuyTicker(s.ticker)}
-                    >
-                      {s.ticker}
-                    </button>
-                  ))}
-                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Tickers held by other players in this league are filtered out.
+                </p>
               </div>
               {err && <div className="text-loss text-sm">{err}</div>}
             </div>

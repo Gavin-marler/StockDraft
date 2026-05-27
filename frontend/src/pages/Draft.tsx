@@ -4,6 +4,7 @@ import { supabase } from "../api/supabaseClient";
 import { fn } from "../api/functions";
 import sp500 from "../data/sp500_top50.json";
 import SignInGate from "../components/SignInGate";
+import TickerAutocomplete from "../components/TickerAutocomplete";
 import { useAuth } from "../hooks/useAuth";
 
 type Player = { id: string; name: string; auth_user_id: string };
@@ -40,7 +41,13 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
   const [search, setSearch] = useState("");
   const [prices, setPrices] = useState<Record<string, Quote>>({});
   const [pricesLoading, setPricesLoading] = useState(false);
-  const [customQuote, setCustomQuote] = useState<Quote | null>(null);
+  const [customInfo, setCustomInfo] = useState<{
+    ticker: string;
+    price: number;
+    change_pct: number;
+    name: string | null;
+    sector: string | null;
+  } | null>(null);
   const [customLoading, setCustomLoading] = useState(false);
   const [customErr, setCustomErr] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{ ticker: string; price: number } | null>(null);
@@ -150,18 +157,29 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
     return q;
   }, [search]);
 
+  // If the user types a different ticker, clear the previous lookup so the
+  // row re-shows the "Look up" button rather than stale data.
+  useEffect(() => {
+    if (customInfo && customInfo.ticker !== exactCustomMatch) {
+      setCustomInfo(null);
+      setCustomErr(null);
+    }
+  }, [exactCustomMatch, customInfo]);
+
   async function lookupCustom(ticker: string) {
     setCustomLoading(true);
     setCustomErr(null);
-    setCustomQuote(null);
+    setCustomInfo(null);
     try {
       const r = await fn.lookupTicker(ticker);
-      if (r.prices[ticker]) {
-        setCustomQuote(r.prices[ticker]);
-        setPrices((p) => ({ ...p, [ticker]: r.prices[ticker] }));
-      } else {
-        setCustomErr(`No price found for ${ticker}`);
-      }
+      setCustomInfo({
+        ticker: r.ticker,
+        price: r.price,
+        change_pct: r.change_pct,
+        name: r.name,
+        sector: r.sector,
+      });
+      setPrices((p) => ({ ...p, [r.ticker]: { price: r.price, change_pct: r.change_pct } }));
     } catch (e: any) {
       setCustomErr(e.message);
     } finally {
@@ -182,7 +200,7 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
       await fn.makePick({ player_id: me.id, ticker: confirming.ticker });
       setConfirming(null);
       setSearch("");
-      setCustomQuote(null);
+      setCustomInfo(null);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -251,18 +269,74 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
                 </p>
               </div>
               <div className="flex-1 max-w-sm">
-                <label htmlFor="d-search" className="label">Search ticker, name, or sector</label>
-                <input
-                  id="d-search"
-                  className="input"
-                  placeholder="e.g. NVDA, healthcare, ROKU"
+                <label htmlFor="d-search" className="label">Search any ticker or company</label>
+                <TickerAutocomplete
+                  inputId="d-search"
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={setSearch}
+                  onPick={(t) => {
+                    if (!sp500.some((s) => s.ticker === t)) lookupCustom(t);
+                  }}
+                  excludeTickers={draftedTickers}
+                  placeholder="e.g. NVDA, MU, ROKU"
                 />
               </div>
             </div>
 
             {err && <div className="text-loss text-sm">{err}</div>}
+
+            {exactCustomMatch && (
+              <div className="rounded-lg border border-accent/40 bg-emerald-950/30 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="font-mono font-semibold text-lg">{exactCustomMatch}</div>
+                  {customInfo?.ticker === exactCustomMatch ? (
+                    <>
+                      <div className="text-sm">
+                        {customInfo.name || "—"}
+                        {customInfo.sector && (
+                          <span className="text-gray-500 ml-2">· {customInfo.sector}</span>
+                        )}
+                      </div>
+                      <div className="text-sm font-mono mt-1">
+                        ${customInfo.price.toFixed(2)}{" "}
+                        <span className={customInfo.change_pct >= 0 ? "text-accent" : "text-loss"}>
+                          ({customInfo.change_pct >= 0 ? "+" : ""}
+                          {customInfo.change_pct.toFixed(2)}%)
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-xs text-gray-400">
+                      Outside top 50 — look up to see live price.
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {draftedTickers.has(exactCustomMatch) ? (
+                    <span className="text-xs text-gray-500">Already drafted</span>
+                  ) : customInfo?.ticker === exactCustomMatch ? (
+                    <button
+                      className="btn-primary text-sm"
+                      disabled={!isMyTurn}
+                      onClick={() =>
+                        requestDraft(exactCustomMatch, customInfo!.price)
+                      }
+                    >
+                      Draft {exactCustomMatch}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-ghost text-sm"
+                      disabled={customLoading}
+                      onClick={() => lookupCustom(exactCustomMatch)}
+                    >
+                      {customLoading ? "Looking up…" : "Look up"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {customErr && <div className="text-loss text-sm">{customErr}</div>}
 
             <div className="overflow-x-auto rounded-lg border border-gray-800">
               <table className="w-full text-sm">
@@ -325,55 +399,9 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
                       </td>
                     </tr>
                   )}
-                  {exactCustomMatch && (
-                    <tr className="border-t border-gray-800 bg-emerald-950/20">
-                      <td className="px-3 py-2 font-mono font-semibold">{exactCustomMatch}</td>
-                      <td className="px-3 py-2 text-gray-400 italic" colSpan={2}>
-                        Outside top 50 — look up live price
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono">
-                        {customQuote ? `$${customQuote.price.toFixed(2)}` : "—"}
-                      </td>
-                      <td
-                        className={`px-3 py-2 text-right font-mono ${
-                          customQuote
-                            ? customQuote.change_pct >= 0
-                              ? "text-accent"
-                              : "text-loss"
-                            : "text-gray-500"
-                        }`}
-                      >
-                        {customQuote
-                          ? `${customQuote.change_pct >= 0 ? "+" : ""}${customQuote.change_pct.toFixed(2)}%`
-                          : ""}
-                      </td>
-                      <td className="px-3 py-2 text-right whitespace-nowrap">
-                        {draftedTickers.has(exactCustomMatch) ? (
-                          <span className="text-xs text-gray-500">Drafted</span>
-                        ) : customQuote ? (
-                          <button
-                            className="btn-primary text-xs px-3 py-1"
-                            disabled={!isMyTurn}
-                            onClick={() => requestDraft(exactCustomMatch, customQuote.price)}
-                          >
-                            Draft
-                          </button>
-                        ) : (
-                          <button
-                            className="btn-ghost text-xs px-3 py-1"
-                            disabled={customLoading}
-                            onClick={() => lookupCustom(exactCustomMatch)}
-                          >
-                            {customLoading ? "Looking up…" : "Look up"}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
-            {customErr && <div className="text-loss text-sm">{customErr}</div>}
           </div>
 
           <div className="card">

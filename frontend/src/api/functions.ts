@@ -74,9 +74,20 @@ export const fn = {
 
   lookupTicker: (ticker: string) =>
     call<{
-      prices: Record<string, { price: number; change_pct: number }>;
-      last_updated: string;
-    }>("fetch-prices", { tickers: [ticker.toUpperCase()], refresh: true }, false),
+      ticker: string;
+      price: number;
+      change_pct: number;
+      name: string | null;
+      sector: string | null;
+      exchange: string | null;
+    }>("lookup-ticker", { ticker }, false),
+
+  searchTickers: (query: string) =>
+    call<{ results: { ticker: string; name: string; type?: string }[] }>(
+      "lookup-ticker",
+      { search: query },
+      false,
+    ),
 
   deleteLeague: (b: { league_id: string }) =>
     call<{ ok: true }>("delete-league", b),

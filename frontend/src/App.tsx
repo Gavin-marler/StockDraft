@@ -5,6 +5,7 @@ import Create from "./pages/Create";
 import Join from "./pages/Join";
 import Admin from "./pages/Admin";
 import Draft from "./pages/Draft";
+import Portfolio from "./pages/Portfolio";
 import Winner from "./pages/Winner";
 import TopBar from "./components/TopBar";
 import SignInModal from "./components/SignInModal";
@@ -83,6 +84,7 @@ export default function App() {
         <Route path="/join" element={<Join />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/draft" element={<Draft />} />
+        <Route path="/portfolio" element={<Portfolio />} />
         <Route path="/winner" element={<Winner />} />
       </Routes>
     </AuthProvider>
