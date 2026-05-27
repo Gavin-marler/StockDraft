@@ -5,6 +5,11 @@ import { fn } from "../api/functions";
 import SignInGate from "../components/SignInGate";
 import TradeModal from "../components/TradeModal";
 import { useAuth } from "../hooks/useAuth";
+import sp500 from "../data/sp500_top50.json";
+
+const SP500_LOOKUP: Record<string, { name: string; sector: string }> = Object.fromEntries(
+  sp500.map((s) => [s.ticker, { name: s.name, sector: s.sector }]),
+);
 
 type Player = { id: string; name: string; last_trade_month: string | null };
 type Holding = {
@@ -45,6 +50,9 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
   const [prices, setPrices] = useState<Record<string, { price: number; change_pct: number }>>({});
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [tradeOpen, setTradeOpen] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<Record<string, { name: string; sector: string }>>(
+    SP500_LOOKUP,
+  );
 
   async function loadAll() {
     const [{ data: l }, { data: ps }, { data: allH }] = await Promise.all([
@@ -101,6 +109,41 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leagueId, user?.id]);
+
+  // Resolve company names for any holding ticker we don't already know
+  // (covers tickers drafted outside the curated top-50 list).
+  useEffect(() => {
+    const missing = Array.from(
+      new Set(
+        holdings
+          .map((h) => h.ticker)
+          .filter((t): t is string => !!t && !companyInfo[t]),
+      ),
+    );
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        missing.map(async (t) => {
+          try {
+            const r = await fn.lookupTicker(t);
+            return [t, { name: r.name || t, sector: r.sector || "—" }] as const;
+          } catch {
+            return [t, { name: t, sector: "—" }] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setCompanyInfo((prev) => {
+        const next = { ...prev };
+        for (const [t, info] of results) next[t] = info;
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [holdings, companyInfo]);
 
   const totals = useMemo(() => {
     let value = 0;
@@ -193,6 +236,8 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
               <thead className="text-xs text-gray-500 text-left">
                 <tr>
                   <th className="py-2">Ticker</th>
+                  <th>Company</th>
+                  <th className="hidden md:table-cell">Sector</th>
                   <th>Shares</th>
                   <th>Buy price</th>
                   <th>Current</th>
@@ -208,7 +253,7 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
                     return (
                       <tr key={h.id} className="border-t border-gray-800">
                         <td className="py-2 font-mono">CASH</td>
-                        <td colSpan={4} className="text-gray-500">Idle slot</td>
+                        <td colSpan={6} className="text-gray-500">Idle slot</td>
                         <td className="text-right">$0.00</td>
                         <td className="text-right">0.00%</td>
                         <td className="text-gray-500">{new Date(h.buy_date).toLocaleDateString()}</td>
@@ -221,9 +266,12 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
                   const pct = Number(h.buy_price) > 0
                     ? (((px || Number(h.buy_price)) - Number(h.buy_price)) / Number(h.buy_price)) * 100
                     : 0;
+                  const info = companyInfo[h.ticker];
                   return (
                     <tr key={h.id} className="border-t border-gray-800">
                       <td className="py-2 font-mono font-semibold">{h.ticker}</td>
+                      <td>{info?.name ?? <span className="text-gray-500">…</span>}</td>
+                      <td className="text-gray-500 hidden md:table-cell">{info?.sector ?? "—"}</td>
                       <td className="font-mono">{Number(h.shares).toFixed(4)}</td>
                       <td className="font-mono">${Number(h.buy_price).toFixed(2)}</td>
                       <td className="font-mono">{px ? `$${px.toFixed(2)}` : "—"}</td>
