@@ -1,4 +1,4 @@
-import * as bcrypt from "https://esm.sh/bcryptjs@2.4.3";
+import bcrypt from "https://esm.sh/bcryptjs@2.4.3";
 import { create, verify, getNumericDate } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
 
 const enc = new TextEncoder();
