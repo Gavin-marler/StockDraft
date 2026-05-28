@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { fn } from "../api/functions";
 import SignInGate from "../components/SignInGate";
+import ShareLink from "../components/ShareLink";
 import { useAuth } from "../hooks/useAuth";
 
 export default function Create() {
@@ -64,7 +65,11 @@ function CreateForm() {
         <div className="card space-y-4">
           <div>
             <div className="label">Invite link (share with players)</div>
-            <CopyField value={inviteUrl} />
+            <ShareLink
+              url={inviteUrl}
+              title={`Join my StockDraft league: ${name.trim()}`}
+              text={`I'm running a StockDraft league. Tap to join: ${inviteUrl}`}
+            />
           </div>
           <div>
             <div className="label">Admin dashboard</div>

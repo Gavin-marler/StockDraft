@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { fn } from "../api/functions";
 import { supabase } from "../api/supabaseClient";
 import SignInGate from "../components/SignInGate";
+import ShareLink from "../components/ShareLink";
 import { useAuth } from "../hooks/useAuth";
 
 type League = {
@@ -220,7 +221,11 @@ function AdminDashboard({ leagueId }: { leagueId: string }) {
         <div className="card space-y-4">
           <div>
             <div className="label">Invite link</div>
-            <input readOnly className="input font-mono text-xs" value={inviteUrl} />
+            <ShareLink
+              url={inviteUrl}
+              title={`Join my StockDraft league: ${league.name}`}
+              text={`I'm running a StockDraft league. Tap to join: ${inviteUrl}`}
+            />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div><div className="text-gray-500">Budget</div><div>${league.budget}</div></div>
