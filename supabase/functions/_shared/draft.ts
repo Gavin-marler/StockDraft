@@ -78,6 +78,9 @@ export async function advanceDraft(leagueId: string): Promise<void> {
     return;
   }
   const next = players[turn.playerIndex];
+  // Fresh 60s for every pick — including back-to-back snake turns where
+  // the same player picks last in round N and first in round N+1. The same
+  // `pick_deadline` write fires for both transitions; don't collapse this.
   const deadline = new Date(Date.now() + PICK_TIMER_SECONDS * 1000).toISOString();
   await sb
     .from("draft_state")

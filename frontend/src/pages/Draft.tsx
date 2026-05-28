@@ -55,7 +55,15 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
   const [confirming, setConfirming] = useState<{ ticker: string; price: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Tracks "we already triggered auto-draft for this round+player". The key
+  // intentionally includes the round so a snake back-to-back (same player,
+  // next round) gets a fresh chance to fire — do NOT collapse to playerId only.
   const autoFiredRef = useRef<string | null>(null);
+  // Refs that let us notice when the same player is back on the clock in a
+  // new round (the snake turnaround). Triggers the back-to-back banner below.
+  const prevPickerRef = useRef<string | null>(null);
+  const prevRoundRef = useRef<number | null>(null);
+  const [flashUntil, setFlashUntil] = useState(0);
 
   async function loadAll() {
     const [{ data: l }, { data: ps }, { data: hs }, { data: state }, { data: act }] = await Promise.all([
@@ -144,6 +152,22 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
     autoFiredRef.current = key;
     fn.autoDraft({ league_id: leagueId }).catch((e) => console.warn("auto-draft", e));
   }, [remainingMs, ds, leagueId]);
+
+  // Detect snake back-to-back: same player on the clock in a new round.
+  useEffect(() => {
+    if (!ds || ds.status !== "picking") return;
+    const prevPicker = prevPickerRef.current;
+    const prevRound = prevRoundRef.current;
+    const samePicker = prevPicker !== null && prevPicker === ds.current_player_id;
+    const newRound = prevRound !== null && prevRound !== ds.current_round;
+    if (samePicker && newRound) {
+      setFlashUntil(Date.now() + 4000);
+    }
+    prevPickerRef.current = ds.current_player_id;
+    prevRoundRef.current = ds.current_round;
+  }, [ds?.current_player_id, ds?.current_round, ds?.status]);
+
+  const flashing = now < flashUntil;
 
   const draftedTickers = useMemo(
     () => new Set(holdings.filter((h) => h.ticker).map((h) => h.ticker!)),
@@ -237,6 +261,9 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
     setErr(null);
     try {
       await fn.makePick({ player_id: me.id, ticker: confirming.ticker });
+      // Don't wait for Realtime to deliver the new draft_state — refetch
+      // immediately so the timer reflects the fresh 60s the server just set.
+      await loadAll();
       setConfirming(null);
       setSearch("");
       setCustomInfo(null);
@@ -282,15 +309,29 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
         <a href={`/?league=${leagueId}`} className="text-sm text-gray-400">Leaderboard →</a>
       </div>
 
-      <div className="card flex items-center justify-between">
+      <div
+        className={`card flex items-center justify-between transition ${
+          flashing ? "ring-2 ring-accent shadow-[0_0_30px_rgba(34,197,94,0.35)]" : ""
+        }`}
+      >
         <div>
           <div className="text-sm text-gray-400">On the clock</div>
           <div className="text-2xl font-bold">
             {currentPlayer?.name || "?"}
             {isMyTurn && <span className="ml-2 text-accent text-sm">(your pick)</span>}
           </div>
+          {flashing && (
+            <div className="text-xs text-accent mt-1">
+              Back-to-back pick — fresh 60s for {currentPlayer?.name}!
+            </div>
+          )}
         </div>
-        <div className={`text-5xl font-mono ${remainingSec <= 10 ? "text-loss" : "text-accent"}`}>
+        <div
+          key={ds.pick_deadline}
+          className={`text-5xl font-mono transition ${
+            remainingSec <= 10 ? "text-loss" : "text-accent"
+          } ${flashing ? "scale-110" : ""}`}
+        >
           {remainingSec}s
         </div>
       </div>
