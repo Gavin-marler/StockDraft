@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { supabase } from "../api/supabaseClient";
 import { fn } from "../api/functions";
 import SignInGate from "../components/SignInGate";
@@ -32,18 +32,25 @@ type League = {
 export default function Portfolio() {
   const [params] = useSearchParams();
   const leagueId = params.get("league") || "";
+  const playerId = params.get("player");
   if (!leagueId) return <Center>Missing league id.</Center>;
   return (
-    <SignInGate title="Sign in to view your portfolio">
-      <PortfolioInner leagueId={leagueId} />
+    <SignInGate title="Sign in to view portfolios">
+      <PortfolioInner leagueId={leagueId} requestedPlayerId={playerId} />
     </SignInGate>
   );
 }
 
-function PortfolioInner({ leagueId }: { leagueId: string }) {
+function PortfolioInner({
+  leagueId,
+  requestedPlayerId,
+}: {
+  leagueId: string;
+  requestedPlayerId: string | null;
+}) {
   const { user } = useAuth();
   const [league, setLeague] = useState<League | null>(null);
-  const [me, setMe] = useState<Player | null>(null);
+  const [viewed, setViewed] = useState<(Player & { auth_user_id: string }) | null>(null);
   const [allPlayers, setAllPlayers] = useState<{ id: string; name: string; auth_user_id: string }[]>([]);
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [allHoldings, setAllHoldings] = useState<{ ticker: string | null }[]>([]);
@@ -54,6 +61,8 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
     SP500_LOOKUP,
   );
 
+  const isOwn = !!viewed && viewed.auth_user_id === user?.id;
+
   async function loadAll() {
     const [{ data: l }, { data: ps }, { data: allH }] = await Promise.all([
       supabase.from("leagues").select("id, name, status, stocks_per_player, budget").eq("id", leagueId).single(),
@@ -61,7 +70,8 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
         .from("players")
         .select("id, name, auth_user_id, last_trade_month")
         .eq("league_id", leagueId)
-        .eq("status", "approved"),
+        .eq("status", "approved")
+        .order("created_at", { ascending: true }),
       supabase
         .from("holdings")
         .select("ticker, players!inner(league_id)")
@@ -70,15 +80,21 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
     if (l) setLeague(l as League);
     const players = (ps as any[]) || [];
     setAllPlayers(players);
-    const mine = players.find((p) => p.auth_user_id === user?.id);
-    setMe(mine || null);
+    // Resolve the player whose portfolio we're viewing: explicit ?player= wins,
+    // otherwise default to the signed-in user's own player record.
+    const explicit = requestedPlayerId
+      ? players.find((p) => p.id === requestedPlayerId)
+      : null;
+    const fallback = players.find((p) => p.auth_user_id === user?.id);
+    const target = explicit || fallback || null;
+    setViewed(target || null);
     setAllHoldings(((allH as any[]) || []).map((h) => ({ ticker: h.ticker })));
 
-    if (mine) {
+    if (target) {
       const { data: hs } = await supabase
         .from("holdings")
         .select("id, ticker, shares, buy_price, slot_value_usd, buy_date, is_cash")
-        .eq("player_id", mine.id)
+        .eq("player_id", target.id)
         .order("buy_date", { ascending: true });
       setHoldings((hs as Holding[]) || []);
     } else {
@@ -166,31 +182,43 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
   );
 
   if (!league) return <Center>Loading…</Center>;
-  if (!me) {
+  if (!viewed) {
+    if (requestedPlayerId) {
+      return (
+        <div className="max-w-md mx-auto py-16 px-6 text-center space-y-3">
+          <div className="text-5xl">🤷</div>
+          <h1 className="text-2xl font-bold">Player not found</h1>
+          <a href={`/?league=${leagueId}`} className="btn-ghost inline-block">Back to leaderboard</a>
+        </div>
+      );
+    }
     return (
       <div className="max-w-md mx-auto py-16 px-6 text-center space-y-3">
         <div className="text-5xl">🙅</div>
         <h1 className="text-2xl font-bold">You're not in this league</h1>
         <p className="text-gray-400">
           {user?.email} isn't an approved player here. Sign in with the email you joined with, or
-          view the public leaderboard.
+          browse other players' portfolios from the leaderboard.
         </p>
         <a href={`/?league=${leagueId}`} className="btn-ghost inline-block">View leaderboard</a>
       </div>
     );
   }
 
-  const canTrade = league.status === "active";
+  const canTrade = isOwn && league.status === "active";
   const thisMonth = new Date().toISOString().slice(0, 7);
-  const alreadyTraded = me.last_trade_month === thisMonth;
+  const alreadyTraded = viewed.last_trade_month === thisMonth;
+  const otherPlayers = allPlayers.filter((p) => p.id !== viewed.id);
 
   return (
     <div className="max-w-5xl mx-auto py-8 px-6 space-y-6">
       <div className="flex items-baseline justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-3xl font-bold">My Portfolio</h1>
+          <h1 className="text-3xl font-bold">
+            {isOwn ? "My Portfolio" : `${viewed.name}'s Portfolio`}
+          </h1>
           <div className="text-xs text-gray-500">
-            {me.name} · {league.name} · {league.status}
+            {viewed.name} · {league.name} · {league.status}
           </div>
         </div>
         <div className="flex items-center gap-3 text-sm">
@@ -210,6 +238,31 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
           )}
         </div>
       </div>
+
+      {otherPlayers.length > 0 && (
+        <div className="card">
+          <div className="text-xs text-gray-500 mb-2">Browse other portfolios</div>
+          <div className="flex flex-wrap gap-2">
+            {!isOwn && allPlayers.some((p) => p.auth_user_id === user?.id) && (
+              <Link
+                to={`/portfolio?league=${leagueId}`}
+                className="px-3 py-1 rounded-full text-xs bg-panel border border-gray-800 hover:border-accent"
+              >
+                ← My portfolio
+              </Link>
+            )}
+            {otherPlayers.map((p) => (
+              <Link
+                key={p.id}
+                to={`/portfolio?league=${leagueId}&player=${p.id}`}
+                className="px-3 py-1 rounded-full text-xs bg-panel border border-gray-800 hover:border-accent"
+              >
+                {p.name}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Portfolio value" value={`$${totals.value.toFixed(2)}`} />
@@ -342,7 +395,7 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
 
       {tradeOpen && (
         <TradeModal
-          player={me}
+          player={viewed}
           holdings={holdings}
           heldTickers={heldTickers}
           prices={prices}

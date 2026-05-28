@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "../api/supabaseClient";
 import { fn } from "../api/functions";
 import ConfettiBurst from "../components/ConfettiBurst";
@@ -172,10 +173,15 @@ export default function Leaderboard({ leagueId }: { leagueId: string }) {
               {rankings.map((r, i) => (
                 <li key={r.player.id} className="rounded-lg border border-gray-800 p-3">
                   <div className="flex items-baseline justify-between gap-2">
-                    <div className="flex items-baseline gap-2 min-w-0">
+                    <Link
+                      to={`/portfolio?league=${leagueId}&player=${r.player.id}`}
+                      className="flex items-baseline gap-2 min-w-0 hover:text-accent"
+                    >
                       <span className="text-xs text-gray-500 font-mono w-5 shrink-0">{i + 1}</span>
-                      <span className="font-semibold truncate">{r.player.name}</span>
-                    </div>
+                      <span className="font-semibold truncate underline-offset-2 hover:underline">
+                        {r.player.name}
+                      </span>
+                    </Link>
                     <div className="text-right shrink-0">
                       <div className="font-mono">${r.value.toFixed(2)}</div>
                       <div className={`text-xs font-mono ${r.pct >= 0 ? "text-accent" : "text-loss"}`}>
@@ -211,7 +217,14 @@ export default function Leaderboard({ leagueId }: { leagueId: string }) {
                 {rankings.map((r, i) => (
                   <tr key={r.player.id} className="border-t border-gray-800">
                     <td className="py-2">{i + 1}</td>
-                    <td className="font-medium">{r.player.name}</td>
+                    <td className="font-medium">
+                      <Link
+                        to={`/portfolio?league=${leagueId}&player=${r.player.id}`}
+                        className="hover:text-accent hover:underline underline-offset-2"
+                      >
+                        {r.player.name}
+                      </Link>
+                    </td>
                     <td className="text-right">${r.value.toFixed(2)}</td>
                     <td className={`text-right ${r.gain >= 0 ? "text-accent" : "text-loss"}`}>
                       {r.gain >= 0 ? "+" : ""}${r.gain.toFixed(2)}
