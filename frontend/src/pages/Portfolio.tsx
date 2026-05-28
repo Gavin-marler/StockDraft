@@ -116,7 +116,7 @@ function PortfolioInner({
     loadAll();
     refreshPrices();
     const ch = supabase
-      .channel(`portfolio:${leagueId}`)
+      .channel(`portfolio:${leagueId}:${requestedPlayerId ?? "self"}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "holdings" }, loadAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "players", filter: `league_id=eq.${leagueId}` }, loadAll)
       .subscribe();
@@ -124,7 +124,7 @@ function PortfolioInner({
       supabase.removeChannel(ch);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leagueId, user?.id]);
+  }, [leagueId, user?.id, requestedPlayerId]);
 
   // Resolve company names for any holding ticker we don't already know
   // (covers tickers drafted outside the curated top-50 list).
@@ -239,30 +239,38 @@ function PortfolioInner({
         </div>
       </div>
 
-      {otherPlayers.length > 0 && (
-        <div className="card">
-          <div className="text-xs text-gray-500 mb-2">Browse other portfolios</div>
-          <div className="flex flex-wrap gap-2">
-            {!isOwn && allPlayers.some((p) => p.auth_user_id === user?.id) && (
-              <Link
-                to={`/portfolio?league=${leagueId}`}
-                className="px-3 py-1 rounded-full text-xs bg-panel border border-gray-800 hover:border-accent"
-              >
-                ← My portfolio
-              </Link>
-            )}
-            {otherPlayers.map((p) => (
+      <div className="card">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs text-gray-500">Browse other portfolios</div>
+          <Link
+            to={`/?league=${leagueId}`}
+            className="text-xs text-gray-400 hover:text-accent"
+          >
+            ← Leaderboard
+          </Link>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {allPlayers.map((p) => {
+            const active = p.id === viewed.id;
+            return (
               <Link
                 key={p.id}
                 to={`/portfolio?league=${leagueId}&player=${p.id}`}
-                className="px-3 py-1 rounded-full text-xs bg-panel border border-gray-800 hover:border-accent"
+                className={`px-3 py-1 rounded-full text-xs border ${
+                  active
+                    ? "bg-accent text-black border-accent cursor-default"
+                    : "bg-panel border-gray-800 hover:border-accent"
+                }`}
               >
                 {p.name}
+                {p.auth_user_id === user?.id && (
+                  <span className="ml-1 text-[10px] opacity-70">(you)</span>
+                )}
               </Link>
-            ))}
-          </div>
+            );
+          })}
         </div>
-      )}
+      </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Portfolio value" value={`$${totals.value.toFixed(2)}`} />
