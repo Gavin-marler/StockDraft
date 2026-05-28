@@ -106,7 +106,13 @@ export default function TopBar() {
 
           {user ? (
             <div className="flex items-center gap-2 pl-3 ml-1 border-l border-gray-800">
-              <span className="text-gray-400 text-xs hidden md:inline">{user.email}</span>
+              <Link
+                to="/account"
+                className="text-gray-400 text-xs hidden md:inline hover:text-white"
+                title="Account settings"
+              >
+                {user.email}
+              </Link>
               <button className="btn-ghost text-xs" onClick={() => signOut()}>Sign out</button>
             </div>
           ) : (
