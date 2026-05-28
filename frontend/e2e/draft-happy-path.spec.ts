@@ -48,19 +48,31 @@ async function signIn(ctx: BrowserContext, email: string) {
   return page;
 }
 
-test("admin creates league, two players join, draft starts, both pick", async ({ browser }) => {
+async function draftFirstAvailable(page: Page, ticker: string, expectedDescription: RegExp) {
+  await page.waitForSelector("text=On the clock");
+  // Use the desktop <tr> row to avoid colliding with the mobile <li> card stack.
+  const row = page.getByRole("row", { name: new RegExp(ticker) });
+  await row.getByRole("button", { name: "Draft" }).click();
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByRole("listitem").filter({ hasText: expectedDescription })).toBeVisible({
+    timeout: 20_000,
+  });
+}
+
+test("admin creates league, two players join, draft starts, everyone picks", async ({ browser }) => {
   const adminEmail = uniqueEmail("admin");
   const aliceEmail = uniqueEmail("alice");
   const bobEmail = uniqueEmail("bob");
   const seeded = await Promise.all([seedUser(adminEmail), seedUser(aliceEmail), seedUser(bobEmail)]);
 
-  // --- Admin: create league
+  // --- Admin: create league (auto-enrolled as the first player)
   const adminCtx = await browser.newContext();
   const adminPage = await signIn(adminCtx, adminEmail);
   adminPage.on("dialog", (d) => d.accept());
   await adminPage.goto("/create");
   const leagueName = `E2E-${Date.now().toString(36).slice(-5)}`;
   await adminPage.getByLabel("League name").fill(leagueName);
+  await adminPage.getByLabel("Your display name").fill("AdminPlayer");
   await adminPage.getByRole("button", { name: "Create league" }).click();
   await expect(adminPage.getByRole("heading", { name: "League created!" })).toBeVisible({ timeout: 30_000 });
 
@@ -100,24 +112,73 @@ test("admin creates league, two players join, draft starts, both pick", async ({
   await adminPage.getByRole("button", { name: "Start draft" }).click();
   await expect(adminPage).toHaveURL(/\/draft\?league=/, { timeout: 30_000 });
 
-  // --- Alice picks first
+  // Snake order = creation order. AdminPlayer picks first, then Alice, then Bob.
+  await draftFirstAvailable(adminPage, "AAPL", /AdminPlayer drafted AAPL/);
   await alicePage.goto(`/draft?league=${leagueId}`);
-  await alicePage.waitForSelector("text=On the clock");
-  const aaplRow = alicePage.getByRole("row", { name: /AAPL/ });
-  await aaplRow.getByRole("button", { name: "Draft" }).click();
-  await alicePage.getByRole("button", { name: "Confirm" }).click();
-  await expect(alicePage.getByText(/Alice drafted AAPL/)).toBeVisible({ timeout: 15_000 });
-
-  // --- Bob picks second
+  await draftFirstAvailable(alicePage, "MSFT", /Alice drafted MSFT/);
   await bobPage.goto(`/draft?league=${leagueId}`);
-  await bobPage.waitForSelector("text=On the clock");
-  await expect(bobPage.getByText(/Bob\s*\(your pick\)/)).toBeVisible({ timeout: 15_000 });
-  const msftRow = bobPage.getByRole("row", { name: /MSFT/ });
-  await msftRow.getByRole("button", { name: "Draft" }).click();
-  await bobPage.getByRole("button", { name: "Confirm" }).click();
-  await expect(bobPage.getByText(/Bob drafted MSFT/)).toBeVisible({ timeout: 15_000 });
+  await draftFirstAvailable(bobPage, "NVDA", /Bob drafted NVDA/);
 
   // Cleanup
   await Promise.all([adminCtx.close(), aliceCtx.close(), bobCtx.close()]);
+  await Promise.all(seeded.map((id) => admin.auth.admin.deleteUser(id)));
+});
+
+test("queue: queued stock is removed when another player drafts it", async ({ browser }) => {
+  const aliceEmail = uniqueEmail("alice");
+  const bobEmail = uniqueEmail("bob");
+  const seeded = await Promise.all([seedUser(aliceEmail), seedUser(bobEmail)]);
+
+  // Alice creates the league (auto-enrolled as player1).
+  const aliceCtx = await browser.newContext();
+  const alicePage = await signIn(aliceCtx, aliceEmail);
+  alicePage.on("dialog", (d) => d.accept());
+  await alicePage.goto("/create");
+  const leagueName = `E2E-Q-${Date.now().toString(36).slice(-5)}`;
+  await alicePage.getByLabel("League name").fill(leagueName);
+  await alicePage.getByLabel("Your display name").fill("Alice");
+  await alicePage.getByRole("button", { name: "Create league" }).click();
+  await expect(alicePage.getByRole("heading", { name: "League created!" })).toBeVisible({ timeout: 30_000 });
+  const inviteUrl = await alicePage.locator('input[readonly][value*="/join?token="]').first().inputValue();
+  const adminUrl = await alicePage.locator('input[readonly][value*="/admin?league="]').first().inputValue();
+  const leagueId = new URL(adminUrl).searchParams.get("league")!;
+
+  // Bob joins as player2.
+  const bobCtx = await browser.newContext();
+  const bobPage = await signIn(bobCtx, bobEmail);
+  await bobPage.goto(inviteUrl);
+  await bobPage.getByLabel("Display name").fill("Bob");
+  await bobPage.getByRole("button", { name: "Request to join" }).click();
+  await expect(bobPage.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
+
+  // Alice (admin) approves Bob, starts draft.
+  await alicePage.goto(adminUrl);
+  await expect(alicePage.locator("button", { hasText: /^Pending \(1\)/ })).toBeVisible({ timeout: 20_000 });
+  await alicePage.locator("button", { hasText: /^Pending \(/ }).click();
+  await alicePage.getByRole("button", { name: "Approve", exact: true }).first().click();
+  await expect(alicePage.locator("button", { hasText: /^Pending \(0\)/ })).toBeVisible();
+  await alicePage.getByRole("button", { name: "draft", exact: true }).click();
+  await alicePage.getByRole("button", { name: "Start draft" }).click();
+  await expect(alicePage).toHaveURL(/\/draft\?league=/, { timeout: 30_000 });
+
+  // Alice picks first (she joined first). She drafts AAPL.
+  await draftFirstAvailable(alicePage, "AAPL", /Alice drafted AAPL/);
+
+  // Now Bob is on the clock. Alice queues NVDA.
+  const nvdaRow = alicePage.getByRole("row", { name: /NVDA/ });
+  await nvdaRow.getByRole("button", { name: "+ Queue" }).click();
+  await expect(alicePage.getByRole("heading", { name: /^My queue/ })).toContainText("1", { timeout: 5_000 });
+  await expect(alicePage.locator("ol li", { hasText: "NVDA" })).toBeVisible();
+
+  // Bob drafts NVDA, sniping Alice's queue.
+  await bobPage.goto(`/draft?league=${leagueId}`);
+  await draftFirstAvailable(bobPage, "NVDA", /Bob drafted NVDA/);
+
+  // NVDA should disappear from Alice's queue (via Realtime).
+  await expect(alicePage.locator("ol li", { hasText: "NVDA" })).toHaveCount(0, { timeout: 10_000 });
+  await expect(alicePage.getByRole("heading", { name: /^My queue/ })).toContainText("0");
+
+  // Cleanup
+  await Promise.all([aliceCtx.close(), bobCtx.close()]);
   await Promise.all(seeded.map((id) => admin.auth.admin.deleteUser(id)));
 });

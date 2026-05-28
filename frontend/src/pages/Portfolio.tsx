@@ -211,7 +211,7 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Portfolio value" value={`$${totals.value.toFixed(2)}`} />
         <Stat label="Total cost" value={`$${totals.cost.toFixed(2)}`} />
         <Stat
@@ -231,7 +231,54 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
         {holdings.length === 0 ? (
           <p className="text-gray-500 text-sm">No holdings yet. The draft hasn't placed any stocks.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            {/* Mobile: card stack */}
+            <ul className="sm:hidden space-y-2">
+              {holdings.map((h) => {
+                if (h.is_cash || !h.ticker) {
+                  return (
+                    <li key={h.id} className="rounded-lg border border-gray-800 p-3">
+                      <div className="flex items-baseline justify-between">
+                        <span className="font-mono font-semibold">CASH</span>
+                        <span className="text-xs text-gray-500">Idle slot</span>
+                      </div>
+                    </li>
+                  );
+                }
+                const px = prices[h.ticker]?.price;
+                const value = px ? px * Number(h.shares) : Number(h.slot_value_usd);
+                const gain = value - Number(h.slot_value_usd);
+                const pct = Number(h.buy_price) > 0
+                  ? (((px || Number(h.buy_price)) - Number(h.buy_price)) / Number(h.buy_price)) * 100
+                  : 0;
+                const info = companyInfo[h.ticker];
+                return (
+                  <li key={h.id} className="rounded-lg border border-gray-800 p-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-mono font-bold">{h.ticker}</div>
+                        <div className="text-xs text-gray-400 truncate">{info?.name ?? "…"}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="font-mono font-semibold">${value.toFixed(2)}</div>
+                        <div className={`text-xs font-mono ${pct >= 0 ? "text-accent" : "text-loss"}`}>
+                          {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-500">
+                      <div>Shares: <span className="text-gray-300 font-mono">{Number(h.shares).toFixed(4)}</span></div>
+                      <div>Buy: <span className="text-gray-300 font-mono">${Number(h.buy_price).toFixed(2)}</span></div>
+                      <div>Current: <span className="text-gray-300 font-mono">{px ? `$${px.toFixed(2)}` : "—"}</span></div>
+                      <div>Bought: <span className="text-gray-300">{new Date(h.buy_date).toLocaleDateString()}</span></div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* Desktop: table */}
+            <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs text-gray-500 text-left">
                 <tr>
@@ -288,7 +335,8 @@ function PortfolioInner({ leagueId }: { leagueId: string }) {
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
 

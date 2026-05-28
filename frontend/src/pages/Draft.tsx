@@ -5,7 +5,9 @@ import { fn } from "../api/functions";
 import sp500 from "../data/sp500_top50.json";
 import SignInGate from "../components/SignInGate";
 import TickerAutocomplete from "../components/TickerAutocomplete";
+import QueuePanel from "../components/QueuePanel";
 import { useAuth } from "../hooks/useAuth";
+import { useQueue } from "../hooks/useQueue";
 
 type Player = { id: string; name: string; auth_user_id: string };
 type Holding = { id: string; player_id: string; ticker: string | null; buy_price: number };
@@ -122,6 +124,14 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
     () => players.find((p) => p.auth_user_id === user?.id) ?? null,
     [players, user]
   );
+  const queue = useQueue(me?.id);
+  const queuedSet = useMemo(() => new Set(queue.map((q) => q.ticker)), [queue]);
+  const companyNames = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const s of sp500) out[s.ticker] = s.name;
+    if (customInfo?.name) out[customInfo.ticker] = customInfo.name;
+    return out;
+  }, [customInfo]);
 
   const remainingMs = ds?.pick_deadline ? new Date(ds.pick_deadline).getTime() - now : 0;
   const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -192,6 +202,35 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
     setConfirming({ ticker, price });
   }
 
+  async function toggleQueue(ticker: string) {
+    if (!me) return;
+    setErr(null);
+    try {
+      if (queuedSet.has(ticker)) {
+        await fn.queueRemove({ player_id: me.id, ticker });
+      } else {
+        await fn.queueAdd({ player_id: me.id, ticker });
+      }
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function draftFromQueue(ticker: string) {
+    const px = prices[ticker]?.price;
+    if (!px) {
+      // Fetch live price quickly so we can show the confirm with a real number.
+      try {
+        const r = await fn.lookupTicker(ticker);
+        requestDraft(ticker, r.price);
+      } catch (e: any) {
+        setErr(e.message);
+      }
+    } else {
+      requestDraft(ticker, px);
+    }
+  }
+
   async function confirmPick() {
     if (!confirming || !me) return;
     setSubmitting(true);
@@ -258,6 +297,16 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
+          {me && (
+            <QueuePanel
+              playerId={me.id}
+              queue={queue}
+              companyNames={companyNames}
+              isMyTurn={isMyTurn}
+              onDraftFromQueue={draftFromQueue}
+            />
+          )}
+
           <div className="card space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-end gap-3 sm:justify-between">
               <div>
@@ -311,34 +360,108 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {draftedTickers.has(exactCustomMatch) ? (
                     <span className="text-xs text-gray-500">Already drafted</span>
-                  ) : customInfo?.ticker === exactCustomMatch ? (
-                    <button
-                      className="btn-primary text-sm"
-                      disabled={!isMyTurn}
-                      onClick={() =>
-                        requestDraft(exactCustomMatch, customInfo!.price)
-                      }
-                    >
-                      Draft {exactCustomMatch}
-                    </button>
                   ) : (
-                    <button
-                      className="btn-ghost text-sm"
-                      disabled={customLoading}
-                      onClick={() => lookupCustom(exactCustomMatch)}
-                    >
-                      {customLoading ? "Looking up…" : "Look up"}
-                    </button>
+                    <>
+                      <button
+                        className="btn-ghost text-sm"
+                        onClick={() => toggleQueue(exactCustomMatch)}
+                      >
+                        {queuedSet.has(exactCustomMatch) ? "Queued ✓" : "+ Queue"}
+                      </button>
+                      {customInfo?.ticker === exactCustomMatch ? (
+                        <button
+                          className="btn-primary text-sm"
+                          disabled={!isMyTurn}
+                          onClick={() =>
+                            requestDraft(exactCustomMatch, customInfo!.price)
+                          }
+                        >
+                          Draft {exactCustomMatch}
+                        </button>
+                      ) : (
+                        <button
+                          className="btn-ghost text-sm"
+                          disabled={customLoading}
+                          onClick={() => lookupCustom(exactCustomMatch)}
+                        >
+                          {customLoading ? "Looking up…" : "Look up"}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
             )}
             {customErr && <div className="text-loss text-sm">{customErr}</div>}
 
-            <div className="overflow-x-auto rounded-lg border border-gray-800">
+            {/* Mobile: card stack */}
+            <ul className="sm:hidden space-y-2">
+              {filtered.map((s) => {
+                const q = prices[s.ticker];
+                const taken = draftedTickers.has(s.ticker);
+                return (
+                  <li
+                    key={s.ticker}
+                    className={`rounded-lg border border-gray-800 p-3 ${
+                      taken ? "opacity-50" : ""
+                    }`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-mono font-bold">{s.ticker}</div>
+                        <div className="text-xs text-gray-400 truncate">{s.name}</div>
+                        <div className="text-[10px] text-gray-500">{s.sector}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="font-mono text-sm">
+                          {q ? `$${q.price.toFixed(2)}` : pricesLoading ? "…" : "—"}
+                        </div>
+                        <div
+                          className={`text-xs font-mono ${
+                            q == null
+                              ? "text-gray-500"
+                              : q.change_pct >= 0
+                              ? "text-accent"
+                              : "text-loss"
+                          }`}
+                        >
+                          {q ? `${q.change_pct >= 0 ? "+" : ""}${q.change_pct.toFixed(2)}%` : ""}
+                        </div>
+                      </div>
+                    </div>
+                    {!taken && (
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <button
+                          className="btn-ghost text-xs py-1.5"
+                          onClick={() => toggleQueue(s.ticker)}
+                        >
+                          {queuedSet.has(s.ticker) ? "Queued ✓" : "+ Queue"}
+                        </button>
+                        <button
+                          className="btn-primary text-xs py-1.5"
+                          disabled={!isMyTurn || !q}
+                          onClick={() => q && requestDraft(s.ticker, q.price)}
+                        >
+                          Draft
+                        </button>
+                      </div>
+                    )}
+                    {taken && (
+                      <div className="mt-2 text-xs text-gray-500 text-center">Drafted</div>
+                    )}
+                  </li>
+                );
+              })}
+              {filtered.length === 0 && !exactCustomMatch && (
+                <li className="text-center text-gray-500 text-sm py-4">No matches in the top 50.</li>
+              )}
+            </ul>
+
+            {/* Desktop: table */}
+            <div className="hidden sm:block overflow-x-auto rounded-lg border border-gray-800">
               <table className="w-full text-sm">
                 <thead className="text-xs text-gray-500 bg-black/30">
                   <tr>
@@ -380,13 +503,22 @@ function DraftRoom({ leagueId }: { leagueId: string }) {
                           {taken ? (
                             <span className="text-xs text-gray-500">Drafted</span>
                           ) : (
-                            <button
-                              className="btn-primary text-xs px-3 py-1"
-                              disabled={!isMyTurn || !q}
-                              onClick={() => q && requestDraft(s.ticker, q.price)}
-                            >
-                              Draft
-                            </button>
+                            <div className="inline-flex gap-1">
+                              <button
+                                className="btn-ghost text-xs px-2 py-1"
+                                onClick={() => toggleQueue(s.ticker)}
+                                title={queuedSet.has(s.ticker) ? "Remove from queue" : "Add to queue"}
+                              >
+                                {queuedSet.has(s.ticker) ? "Queued ✓" : "+ Queue"}
+                              </button>
+                              <button
+                                className="btn-primary text-xs px-3 py-1"
+                                disabled={!isMyTurn || !q}
+                                onClick={() => q && requestDraft(s.ticker, q.price)}
+                              >
+                                Draft
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>

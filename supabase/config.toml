@@ -36,6 +36,8 @@ verify_jwt = true
 verify_jwt = true
 [functions.delete-league]
 verify_jwt = true
+[functions.queue-ticker]
+verify_jwt = true
 
 # Public functions: anonymous leaderboard / cron sweeps.
 [functions.fetch-prices]

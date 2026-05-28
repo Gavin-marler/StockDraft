@@ -101,7 +101,7 @@ function CreateForm() {
           />
           <p className="text-xs text-gray-500 mt-1">You'll be automatically added as a player.</p>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label htmlFor="f-budget" className="label">Budget per player ($)</label>
             <input
@@ -126,7 +126,7 @@ function CreateForm() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label htmlFor="f-max" className="label">Max players (2-8)</label>
             <input

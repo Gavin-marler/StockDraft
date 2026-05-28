@@ -155,7 +155,7 @@ export default function Leaderboard({ leagueId }: { leagueId: string }) {
             Status: {league.status} · Ends {league.end_date}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex items-center gap-3 text-sm flex-wrap">
           <span className="text-gray-500">
             {lastUpdated ? `Updated ${timeAgo(lastUpdated)}` : "—"}
           </span>
@@ -167,7 +167,36 @@ export default function Leaderboard({ leagueId }: { leagueId: string }) {
         <div className="lg:col-span-2 space-y-6">
           <div className="card">
             <h2 className="font-semibold mb-4">Standings</h2>
-            <table className="w-full text-sm">
+            {/* Mobile: card stack */}
+            <ul className="sm:hidden space-y-2">
+              {rankings.map((r, i) => (
+                <li key={r.player.id} className="rounded-lg border border-gray-800 p-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="flex items-baseline gap-2 min-w-0">
+                      <span className="text-xs text-gray-500 font-mono w-5 shrink-0">{i + 1}</span>
+                      <span className="font-semibold truncate">{r.player.name}</span>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-mono">${r.value.toFixed(2)}</div>
+                      <div className={`text-xs font-mono ${r.pct >= 0 ? "text-accent" : "text-loss"}`}>
+                        {r.pct >= 0 ? "+" : ""}{r.pct.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                  {league.status === "active" && r.player.auth_user_id === user?.id && (
+                    <button
+                      className="btn-ghost text-xs w-full mt-2"
+                      onClick={() => setTradeFor(r.player)}
+                    >
+                      Trade
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+
+            {/* Desktop: table */}
+            <table className="hidden sm:table w-full text-sm">
               <thead className="text-gray-500 text-left">
                 <tr>
                   <th className="py-1">#</th>

@@ -116,8 +116,9 @@ export async function executePick(
     is_cash: false,
   });
   if (error) throw error;
-  // upsert price cache
   await sb.from("prices").upsert({ ticker, price, change_pct: 0, fetched_at: new Date().toISOString() });
+  // Remove this ticker from every player's queue in this league.
+  await sb.from("draft_queue").delete().eq("league_id", leagueId).eq("ticker", ticker);
   const { data: player } = await sb.from("players").select("name").eq("id", playerId).single();
   await sb.from("activity").insert({
     league_id: leagueId,
@@ -130,9 +131,27 @@ export async function executePick(
   });
 }
 
-// Pick the highest-market-cap undrafted ticker from our curated list.
-export async function pickAutoDraftTicker(leagueId: string): Promise<{ ticker: string; price: number } | null> {
+// Auto-draft selection. Tries the player's queue first (top of queue, skipping
+// any tickers already drafted), then falls back to the highest-market-cap
+// undrafted ticker from our curated S&P 50 list.
+export async function pickAutoDraftTicker(
+  leagueId: string,
+  playerId: string,
+): Promise<{ ticker: string; price: number } | null> {
+  const sb = serviceClient();
   const drafted = await draftedTickers(leagueId);
+
+  const { data: queueRows } = await sb
+    .from("draft_queue")
+    .select("ticker")
+    .eq("player_id", playerId)
+    .order("position", { ascending: true });
+  for (const row of (queueRows as { ticker: string }[]) || []) {
+    if (drafted.has(row.ticker)) continue;
+    const q = await quote(row.ticker);
+    if (q) return { ticker: row.ticker, price: q.price };
+  }
+
   for (const t of SP500_TOP50) {
     if (drafted.has(t)) continue;
     const q = await quote(t);

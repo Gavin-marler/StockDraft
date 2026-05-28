@@ -91,4 +91,13 @@ export const fn = {
 
   deleteLeague: (b: { league_id: string }) =>
     call<{ ok: true }>("delete-league", b),
+
+  queueAdd: (b: { player_id: string; ticker: string }) =>
+    call<{ ok: true }>("queue-ticker", { ...b, action: "add" }),
+
+  queueRemove: (b: { player_id: string; ticker: string }) =>
+    call<{ ok: true }>("queue-ticker", { ...b, action: "remove" }),
+
+  queueReorder: (b: { player_id: string; ticker: string; direction: "up" | "down" }) =>
+    call<{ ok: true }>("queue-ticker", { ...b, action: "reorder" }),
 };

@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
     const expired = ds.pick_deadline && new Date(ds.pick_deadline).getTime() < Date.now();
     if (!admin && !expired) return err("Pick timer has not expired");
 
-    const pick = await pickAutoDraftTicker(league_id);
+    const pick = await pickAutoDraftTicker(league_id, ds.current_player_id);
     if (!pick) return err("No tickers available for auto-draft", 500);
     await executePick(league_id, ds.current_player_id, pick.ticker, pick.price, true);
     await advanceDraft(league_id);

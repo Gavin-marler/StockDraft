@@ -222,7 +222,7 @@ function AdminDashboard({ leagueId }: { leagueId: string }) {
             <div className="label">Invite link</div>
             <input readOnly className="input font-mono text-xs" value={inviteUrl} />
           </div>
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div><div className="text-gray-500">Budget</div><div>${league.budget}</div></div>
             <div><div className="text-gray-500">Stocks per player</div><div>{league.stocks_per_player}</div></div>
             <div><div className="text-gray-500">Max players</div><div>{league.max_players}</div></div>
